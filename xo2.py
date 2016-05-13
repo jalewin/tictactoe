@@ -1,8 +1,5 @@
-# this is a test NO IT ISNT
-# comment in branch
-## made this change
 import numpy as np
-BSIZE = 4
+BSIZE = 3
 EMPTY = 0
 X = 1
 O = 2
@@ -91,7 +88,7 @@ def playHuman(human_first=True):
         else:
             move, c_val, c_state = chooseNextMove(board, side, epsilon=0)
         makeMove(board, move)
-        val, state = calcVal(board, move)
+        val, state, rv = calcVal(board, move)
         print(val)
         side = {O:X,X:O}[side]
     print(board)
@@ -135,6 +132,7 @@ def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000, reset_weights = Fa
         while state is NONTERMINAL:
             current_move, current_val, state = chooseNextMove(board, current_side, epsilon)
             makeMove(board, current_move)
+            # print(board, current_move, current_val, state)
             tmp=(board.copy(), current_move, current_val, state)
             board_history.append(tmp)
             current_side = {O:X,X:O}[current_side]
@@ -144,30 +142,52 @@ def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000, reset_weights = Fa
         next_val = invertVal(v, m.side)
         wins[s]+=1
         for b,m,v,s in reversed(board_history[:-1]):
-            val, state = calcVal(b, m)
-            val_diff = next_val - val
-            deriv = calcDeriv(b, m.side)
-            weights += ALPHA * val_diff * deriv
+            # val, state = calcVal(b, m)
+            val, state, deriv = calcValAndDeriv(b, m, next_val)
+            # val_diff = next_val - val
+            # deriv = calcDeriv(b, m.side)
+            # weights += ALPHA * val_diff * deriv
             # for debug
-            val2, junk = calcVal(b, m)
-            val2_diff = next_val - val2
-            val_update = abs(val_diff)-abs(val2_diff)
+            orig_w0 = weights[0][0].copy()
+            max_dw, max_db = updateWeights(weights, deriv, alpha)
+            new_w0 = weights[0][0].copy()
+            new_val, junk1, junk2 = calcVal(b, m)
+            # val2, junk = calcVal(b, m)
+            orig_error = abs(next_val - val)
+            new_error = abs(next_val - new_val)
+            val_update = abs(new_val - val)
+            # print(val_update, "orig_error=",orig_error, "new_error=",new_error, "max_w0_change=",abs(new_w0-orig_w0).max())
+            # val_update = abs(val_diff)-abs(val2_diff)
             if val_update > largest_val_update:
                 largest_val_update=val_update
             orig_next_val = next_val
-            next_val = invertVal(val2,state)
+            # next_val = invertVal(val,state)
+            orig_next_val = next_val
+            next_val = invertVal(new_val,state)
             if DEBUG:
-                print("orig_val:",val,"target:",orig_next_val,"new_val:",val2, "next_target:",next_val)
+                print("orig_val:",val,"target:",orig_next_val,"new_val:",new_val, "next_target:",next_val)
         if (ii+1)%100==0:
             print("num games:",ii+1,"largest val change:",largest_val_update, 
             "wins:",wins)
             wins = {OWIN:0,XWIN:0,DRAW:0}
             largest_val_update = 0
-    
-       
+ 
+def updateWeights(weights, deriv, alpha):
+    max_dw, max_db = np.float64('-inf'),np.float64('-inf') 
+    for (w,b),(dw,db) in zip(weights, deriv):
+        m_dw = dw.max()
+        m_db = db.max()
+        if m_dw>max_dw:
+            max_dw = m_dw
+        if m_db>max_db:
+            max_db = m_db
+        w+=alpha*dw
+        b+=alpha*db
+    return max_dw, max_db
+            
 def actionReward(board, move):
     makeMove(board, move)
-    val, state = calcVal(board, move)
+    val, state, rv = calcVal(board, move)
     undoMove(board, move)
     return (val, state)
 
@@ -187,49 +207,83 @@ def boardRep(board, side):
 
 def calcVal(board, last_move):
     win = checkWin(board, last_move)
+    state = None
     if win:
-        final_state={O:OWIN,X:XWIN}[last_move.side]
-        return (1.0,final_state)
+        state={O:OWIN,X:XWIN}[last_move.side]
+        val = 1.0
     if (board==EMPTY).sum()==0:
-        return (0.5, DRAW)
+        state = DRAW
+        val = 0.5
     board_rep = boardRep(board, last_move.side)
     rv = valFunc(board_rep, weights)
-    # print(rv)
-    val = rv[2][0][0]
-    return (val, NONTERMINAL)
+    if state is None:
+        state = NONTERMINAL
+        val = rv[0][-1]
+    return (val, state, rv)
+    
+def calcValAndDeriv(board, last_move, y):
+    # forward
+    final_val, state, (activations, zs) = calcVal(board, last_move)
+    # backprop
+    deriv = valFunc_deriv(activations, zs, weights, y)
+    return (final_val, state, deriv)
     
 def invertVal(val, state):
     if state is DRAW:
         return val
     return 1.0 - val             
           
-def calcDeriv(board, last_side):
-    board_rep = boardRep(board, last_side)
-    deriv = valFuncDeriv(board_rep, weights)
-    return deriv
-
+## backpropagation algorithm          
+def valFunc_deriv(activations, zs, weights, y):
+    activation = activations[-1]
+    z = zs[-1]
+    nabla_a_c = costFunc_deriv(activation, y)
+    deltas = [nabla_a_c * outFunc_deriv(z)]
+    dC_dw = []
+    dC_db = []
+    for activation, z, (W, b) in zip(reversed(activations[1:-1]), 
+                                     reversed(zs[:-1]), 
+                                     reversed(weights[1:])):
+#        dC_dw.append(activation*deltas[-1]) 
+#        dC_db.append(deltas[-1])
+        deltas.append(np.dot(W.T,deltas[-1]) * sigmaFunc_deriv(z))
+    for activation, delta in zip(activations[:-1], reversed(deltas)):
+        dC_dw.append(np.dot(delta,activation.T)) 
+        dC_db.append(delta)
+    dC = [(dw,db) for dw,db in zip(dC_dw,dC_db)]
+    return dC
+    
 def outFunc(x):
     return 1.0/(1.0+np.exp(x))
 
 def outFunc_deriv(x):
     e_x = np.exp(x)
-    return -e_x*np.power(1+e_x,-2)
-    
+    tmp = 1+e_x
+    return -e_x/(tmp*tmp)
 
+## assuming cost function:  0.5*(activation - y)^2
+# could try: -y*log(y_hat)-(1-y)*log(1-y_hat)
+def costFunc_deriv(activation, y):
+    return activation - y
+    
 def valFunc(x, weights):
-    (activations, zs) = nnFunc(x,weights)
-    val = outFunc(activations[-1])
-    return (activations, zs, val)
+    activations, zs = nnFunc(x,weights)
+    return (activations, zs)
 
 def nnFunc(x, weights):
     activation = x
     activations = [x]
     zs = []
-    for W,b in weights:
+    for W,b in weights[:-1]:
         z = np.dot(W,activation)+b
         activation = sigmaFunc(z)
         zs.append(z)
         activations.append(activation)
+    W,b = weights[-1]
+    z = np.dot(W,activation)+b
+    activation = outFunc(z)
+    zs.append(z)
+    activations.append(activation)
     return (activations, zs)
 
 def sigmaFunc(z):
@@ -238,11 +292,6 @@ def sigmaFunc(z):
 def sigmaFunc_deriv(z):
     return 1.0*(z>0)
 
-# use (y-y_hat)**2 OR 
-# -y*log(y_hat)-(1-y)*log(1-y_hat)
-def costFunc_deriv():
-    None
-    
 def checkWin(board, last_move):
     val = last_move.side
     ii = last_move.ii
@@ -349,3 +398,5 @@ def sigmoid_prime(z):
     return sigmoid(z)*(1-sigmoid(z))
 
 #######################################################################
+
+
