@@ -10,7 +10,8 @@ OWIN = "OWIN"
 DRAW = "DRAW"
 NONTERMINAL = "NONTERMINAL"
 
-LAYERS = [64, 64, 1]
+# LAYERS = [64, 64, 1]
+LAYERS = [27, 1]
 
 DEBUG = False
 
@@ -93,6 +94,7 @@ def playHuman(human_first=True):
         side = {O:X,X:O}[side]
     print(board)
     print(state)
+    return board, move
     
 def getMove(board, side):
     good = False
@@ -213,7 +215,7 @@ def calcVal(board, last_move):
     if win:
         state={O:OWIN,X:XWIN}[last_move.side]
         val = 1.0
-    if (board==EMPTY).sum()==0:
+    elif (board==EMPTY).sum()==0:
         state = DRAW
         val = 0.5
     board_rep = boardRep(board, last_move.side)
@@ -262,9 +264,10 @@ def fastLearn(reset_games=False, reset_weights=False,
         max_dw, max_db = updateWeights(fast_weights, deriv, alpha)
         if i%100==0:
             ee = activations[-1]-ss
-            print("max error=",ee.max(),
-                  "min error=",ee.min(), 
-                  "mean abs error=",abs(ee).mean(),
+            print("max=",ee.max(),
+                  "min=",ee.min(), 
+                  "mean_abs=",abs(ee).mean(),
+                  "mean_sqr=",(ee*ee).mean(),
                   "max dw=",max_dw,
                   "max db=",max_db)
     
