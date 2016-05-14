@@ -141,20 +141,22 @@ def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000, reset_weights = Fa
         b,m,v,s = board_history[-1]
         next_val = invertVal(v, m.side)
         wins[s]+=1
+        
+        global final_games
+        last_board = b.copy()
+        undoMove(last_board,m)
+        m_side = m.side
+        m_other_side = {O:X,X:O}[m_side]
+        final_games.append([last_board, m, s, v, 
+                            boardRep(last_board, m_side), 
+                            boardRep(last_board, m_other_side) ])
+        
         for b,m,v,s in reversed(board_history[:-1]):
-            # val, state = calcVal(b, m)
             val, state, deriv = calcValAndDeriv(b, m, next_val)
-            # val_diff = next_val - val
-            # deriv = calcDeriv(b, m.side)
-            # weights += ALPHA * val_diff * deriv
             # for debug
-            orig_w0 = weights[0][0].copy()
             max_dw, max_db = updateWeights(weights, deriv, alpha)
-            new_w0 = weights[0][0].copy()
             new_val, junk1, junk2 = calcVal(b, m)
             # val2, junk = calcVal(b, m)
-            orig_error = abs(next_val - val)
-            new_error = abs(next_val - new_val)
             val_update = abs(new_val - val)
             # print(val_update, "orig_error=",orig_error, "new_error=",new_error, "max_w0_change=",abs(new_w0-orig_w0).max())
             # val_update = abs(val_diff)-abs(val2_diff)
@@ -181,8 +183,8 @@ def updateWeights(weights, deriv, alpha):
             max_dw = m_dw
         if m_db>max_db:
             max_db = m_db
-        w+=alpha*dw
-        b+=alpha*db
+        w-=alpha*dw
+        b-=alpha*db
     return max_dw, max_db
             
 def actionReward(board, move):
@@ -228,6 +230,45 @@ def calcValAndDeriv(board, last_move, y):
     deriv = valFunc_deriv(activations, zs, weights, y)
     return (final_val, state, deriv)
     
+def calcValAndDerivRaw(board_reps, y_s, weights):
+    # forward
+    (activations, zs) = valFunc(board_reps, weights)
+    # backprop
+    deriv = valFunc_deriv(activations, zs, weights, y_s)
+    return (activations, zs, deriv)
+
+def fastLearn(reset_games=False, reset_weights=False, 
+              n_games = 10000, n_updates = 10000, alpha = 0.01):
+    if reset_games:
+        global final_games
+        final_games = []
+    if reset_weights:
+        global fast_weights
+        fast_weights = createWeights()
+    if n_games>0:
+        # create random games, last to final position is added to final_games
+        learnXO(reset_weights=True, num_games=n_games, alpha = 0.1, epsilon=1)
+    rr=np.hstack(
+        [ np.hstack([r1 for b,m,s,v,r1,r2 in final_games]),
+          np.hstack([r2 for b,m,s,v,r1,r2 in final_games]) ]
+                )
+    ss=np.hstack(
+        [ np.hstack([v for b,m,s,v,r1,r2 in final_games]).reshape([1,-1]),
+          np.hstack([1-v for b,m,s,v,r1,r2 in final_games]).reshape([1,-1]) ]
+        )
+    print("using",rr.shape, ss.shape)
+    for i in range(n_updates):
+        activations, zs, deriv =calcValAndDerivRaw(rr,ss,fast_weights)
+        max_dw, max_db = updateWeights(fast_weights, deriv, alpha)
+        if i%100==0:
+            ee = activations[-1]-ss
+            print("max error=",ee.max(),
+                  "min error=",ee.min(), 
+                  "mean abs error=",abs(ee).mean(),
+                  "max dw=",max_dw,
+                  "max db=",max_db)
+    
+    
 def invertVal(val, state):
     if state is DRAW:
         return val
@@ -243,23 +284,23 @@ def valFunc_deriv(activations, zs, weights, y):
     dC_db = []
     for activation, z, (W, b) in zip(reversed(activations[1:-1]), 
                                      reversed(zs[:-1]), 
-                                     reversed(weights[1:])):
-#        dC_dw.append(activation*deltas[-1]) 
-#        dC_db.append(deltas[-1])
+                                     reversed(weights[1:])):                             
         deltas.append(np.dot(W.T,deltas[-1]) * sigmaFunc_deriv(z))
+    n_samples = deltas[-1].shape[1]
+    ones = np.ones(dtype=np.float64, shape=[n_samples,1])
     for activation, delta in zip(activations[:-1], reversed(deltas)):
-        dC_dw.append(np.dot(delta,activation.T)) 
-        dC_db.append(delta)
+        dC_dw.append(np.dot(delta,activation.T)/n_samples) 
+        dC_db.append(np.dot(delta, ones)/n_samples)
     dC = [(dw,db) for dw,db in zip(dC_dw,dC_db)]
     return dC
     
 def outFunc(x):
-    return 1.0/(1.0+np.exp(x))
+    return 1.0/(1.0+np.exp(-x))
 
 def outFunc_deriv(x):
-    e_x = np.exp(x)
+    e_x = np.exp(-x)
     tmp = 1+e_x
-    return -e_x/(tmp*tmp)
+    return e_x/(tmp*tmp)
 
 ## assuming cost function:  0.5*(activation - y)^2
 # could try: -y*log(y_hat)-(1-y)*log(1-y_hat)
