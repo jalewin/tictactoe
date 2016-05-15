@@ -117,14 +117,15 @@ def getMove(board, side):
     return move
             
  
-def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000, reset_weights = False):
+def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000, 
+            reset_weights = False, save_last=False):
     global ALPHA
     ALPHA = alpha
     if 'weights' not in globals() or reset_weights:
         global weights
         weights = createWeights()
     wins = {OWIN:0,XWIN:0,DRAW:0}
-    largest_val_update = 0
+    largest_cost_update = 0
     for ii in range(num_games):
         # orig_weights = weights.copy()
         board = createBoard()
@@ -138,43 +139,44 @@ def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000, reset_weights = Fa
             tmp=(board.copy(), current_move, current_val, state)
             board_history.append(tmp)
             current_side = {O:X,X:O}[current_side]
+        
         if DEBUG:
-            print(board_history[-1])
+            print()
+            print("NEW GAME:")
+        
         b,m,v,s = board_history[-1]
-        next_val = invertVal(v, m.side)
+        if s is DRAW:
+            target_val = 0.5
+        else:
+            target_val = 1.0
         wins[s]+=1
         
-        global final_games
-        last_board = b.copy()
-        undoMove(last_board,m)
-        m_side = m.side
-        m_other_side = {O:X,X:O}[m_side]
-        final_games.append([last_board, m, s, v, 
-                            boardRep(last_board, m_side), 
-                            boardRep(last_board, m_other_side) ])
+        if save_last:
+            global final_games
+            last_board = b.copy()
+            # undoMove(last_board,m)
+            m_side = m.side
+            final_games.append([last_board, m, s, v, target_val,
+                                boardRep(last_board, m_side)])
         
-        for b,m,v,s in reversed(board_history[:-1]):
-            val, state, deriv = calcValAndDeriv(b, m, next_val)
-            # for debug
+        for b,m,v,s in reversed(board_history):
+            if DEBUG:
+                print("1")
+                print(b,m)
+            val, state, deriv = calcValAndDeriv(b, m, target_val)
             max_dw, max_db = updateWeights(weights, deriv, alpha)
             new_val, junk1, junk2 = calcVal(b, m)
-            # val2, junk = calcVal(b, m)
-            val_update = abs(new_val - val)
-            # print(val_update, "orig_error=",orig_error, "new_error=",new_error, "max_w0_change=",abs(new_w0-orig_w0).max())
-            # val_update = abs(val_diff)-abs(val2_diff)
-            if val_update > largest_val_update:
-                largest_val_update=val_update
-            orig_next_val = next_val
-            # next_val = invertVal(val,state)
-            orig_next_val = next_val
-            next_val = invertVal(new_val,state)
             if DEBUG:
-                print("orig_val:",val,"target:",orig_next_val,"new_val:",new_val, "next_target:",next_val)
+                print("val:",v,"target:",target_val,"val_after_update",new_val)
+            cost = (new_val - val)**2
+            if cost > largest_cost_update:
+                largest_cost_update=cost
+            target_val = invertVal(new_val,state)
         if (ii+1)%100==0:
-            print("num games:",ii+1,"largest val change:",largest_val_update, 
+            print("num games:",ii+1,"cost:",largest_cost_update, 
             "wins:",wins)
             wins = {OWIN:0,XWIN:0,DRAW:0}
-            largest_val_update = 0
+            largest_cost_update = 0
  
 def updateWeights(weights, deriv, alpha):
     max_dw, max_db = np.float64('-inf'),np.float64('-inf') 
@@ -211,18 +213,16 @@ def boardRep(board, side):
 
 def calcVal(board, last_move):
     win = checkWin(board, last_move)
-    state = None
+    state = NONTERMINAL
     if win:
         state={O:OWIN,X:XWIN}[last_move.side]
-        val = 1.0
+        # val = 1.0
     elif (board==EMPTY).sum()==0:
         state = DRAW
-        val = 0.5
+        # val = 0.5
     board_rep = boardRep(board, last_move.side)
     rv = valFunc(board_rep, weights)
-    if state is None:
-        state = NONTERMINAL
-        val = rv[0][-1]
+    val = rv[0][-1]
     return (val, state, rv)
     
 def calcValAndDeriv(board, last_move, y):
@@ -232,11 +232,11 @@ def calcValAndDeriv(board, last_move, y):
     deriv = valFunc_deriv(activations, zs, weights, y)
     return (final_val, state, deriv)
     
-def calcValAndDerivRaw(board_reps, y_s, weights):
+def calcValAndDerivRaw(board_reps, y, weights):
     # forward
     (activations, zs) = valFunc(board_reps, weights)
     # backprop
-    deriv = valFunc_deriv(activations, zs, weights, y_s)
+    deriv = valFunc_deriv(activations, zs, weights, y)
     return (activations, zs, deriv)
 
 def fastLearn(reset_games=False, reset_weights=False, 
@@ -249,18 +249,22 @@ def fastLearn(reset_games=False, reset_weights=False,
         fast_weights = createWeights()
     if n_games>0:
         # create random games, last to final position is added to final_games
-        learnXO(reset_weights=True, num_games=n_games, alpha = 0.1, epsilon=1)
-    rr=np.hstack(
-        [ np.hstack([r1 for b,m,s,v,r1,r2 in final_games]),
-          np.hstack([r2 for b,m,s,v,r1,r2 in final_games]) ]
-                )
-    ss=np.hstack(
-        [ np.hstack([v for b,m,s,v,r1,r2 in final_games]).reshape([1,-1]),
-          np.hstack([1-v for b,m,s,v,r1,r2 in final_games]).reshape([1,-1]) ]
-        )
+        learnXO(reset_weights=True, num_games=n_games, alpha = 0.1, epsilon=1, save_last=True)
+#    rr=np.hstack(
+#        [ np.hstack([r1 for b,m,s,v,r1,r2 in final_games]),
+#          np.hstack([r2 for b,m,s,v,r1,r2 in final_games]) ]
+#                )
+#    ss=np.hstack(
+#        [ np.hstack([v for b,m,s,v,r1,r2 in final_games]).reshape([1,-1]),
+#          np.hstack([1-v for b,m,s,v,r1,r2 in final_games]).reshape([1,-1]) ]
+#        )
+        
+    rr = np.hstack([r for b,m,s,v,t,r in final_games])
+    ss = np.hstack([t for b,m,s,v,t,r in final_games]).reshape([1,-1])
+        
     print("using",rr.shape, ss.shape)
     for i in range(n_updates):
-        activations, zs, deriv =calcValAndDerivRaw(rr,ss,fast_weights)
+        activations, zs, deriv = calcValAndDerivRaw(rr,ss,fast_weights)
         max_dw, max_db = updateWeights(fast_weights, deriv, alpha)
         if i%100==0:
             ee = activations[-1]-ss
