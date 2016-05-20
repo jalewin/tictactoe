@@ -11,7 +11,7 @@ DRAW = "DRAW"
 NONTERMINAL = "NONTERMINAL"
 
 # LAYERS = [64, 64, 1]
-LAYERS = [27, 1]
+LAYERS = [16,16, 1]
 
 DEBUG = False
 
@@ -118,7 +118,7 @@ def getMove(board, side):
             
  
 def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000, 
-            reset_weights = False, save_last=False):
+            reset_weights = False, save_games=False):
     global ALPHA
     ALPHA = alpha
     if 'weights' not in globals() or reset_weights:
@@ -126,6 +126,7 @@ def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000,
         weights = createWeights()
     wins = {OWIN:0,XWIN:0,DRAW:0}
     largest_cost_update = 0
+
     for ii in range(num_games):
         # orig_weights = weights.copy()
         board = createBoard()
@@ -139,7 +140,7 @@ def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000,
             tmp=(board.copy(), current_move, current_val, state)
             board_history.append(tmp)
             current_side = {O:X,X:O}[current_side]
-        
+    
         if DEBUG:
             print()
             print("NEW GAME:")
@@ -151,7 +152,19 @@ def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000,
             target_val = 1.0
         wins[s]+=1
         
-        if save_last:
+        if save_games:
+            targets=[target_val if i%2==0 else 1-target_val for i in range(len(board_history))]
+            targets=np.hstack(targets).reshape([1,-1])
+            board_reps=[boardRep(b,m.side) for b,m,v,s in board_history]
+            board_reps=np.hstack(board_reps)
+            
+            global games_history
+            if 'games_history' not in globals():
+                games_history = [board_reps, targets]
+            else:
+                games_history[0] = np.hstack([games_history[0], board_reps])
+                games_history[1] = np.hstack([games_history[1], targets])
+                
             global final_games
             last_board = b.copy()
             # undoMove(last_board,m)
@@ -204,6 +217,7 @@ def makeMove(board, move):
 def undoMove(board, move):
     assert(board[move.ii,move.jj]!=EMPTY)
     board[move.ii,move.jj]=EMPTY
+    return board
     
 
 def boardRep(board, side):
@@ -234,7 +248,7 @@ def calcValAndDeriv(board, last_move, y):
     
 def calcValAndDerivRaw(board_reps, y, weights):
     # forward
-    (activations, zs) = valFunc(board_reps, weights)
+    (activations, zs) = nnFunc(board_reps, weights)
     # backprop
     deriv = valFunc_deriv(activations, zs, weights, y)
     return (activations, zs, deriv)
@@ -249,7 +263,7 @@ def fastLearn(reset_games=False, reset_weights=False,
         fast_weights = createWeights()
     if n_games>0:
         # create random games, last to final position is added to final_games
-        learnXO(reset_weights=True, num_games=n_games, alpha = 0.1, epsilon=1, save_last=True)
+        learnXO(reset_weights=True, num_games=n_games, alpha = 0.1, epsilon=1, save_games=True)
 #    rr=np.hstack(
 #        [ np.hstack([r1 for b,m,s,v,r1,r2 in final_games]),
 #          np.hstack([r2 for b,m,s,v,r1,r2 in final_games]) ]
@@ -261,20 +275,46 @@ def fastLearn(reset_games=False, reset_weights=False,
         
     rr = np.hstack([r for b,m,s,v,t,r in final_games])
     ss = np.hstack([t for b,m,s,v,t,r in final_games]).reshape([1,-1])
-        
-    print("using",rr.shape, ss.shape)
-    for i in range(n_updates):
-        activations, zs, deriv = calcValAndDerivRaw(rr,ss,fast_weights)
-        max_dw, max_db = updateWeights(fast_weights, deriv, alpha)
+    
+    learn_i(inp=rr, target=ss, weights=fast_weights, 
+            alpha=alpha, n_updates=n_updates)
+
+
+def learn_i(inp, target, weights, alpha, n_updates):
+    # print("using",inp.shape, target.shape)
+    for i in range(1,n_updates):
+        activations, zs, deriv = calcValAndDerivRaw(inp,target,weights)
+        max_dw, max_db = updateWeights(weights, deriv, alpha)
         if i%100==0:
-            ee = activations[-1]-ss
+            ee = activations[-1]-target
             print("max=",ee.max(),
                   "min=",ee.min(), 
                   "mean_abs=",abs(ee).mean(),
                   "mean_sqr=",(ee*ee).mean(),
                   "max dw=",max_dw,
                   "max db=",max_db)
-    
+
+def alternate_learn(inp, target, inp_m1, weights, alpha, n_updates):
+    for i in range(1,n_updates):
+        # learn_i(inp, target, weights, alpha, 101)
+        aa, zz = nnFunc(inp, weights)
+        target_m1 = 1.0-aa[-1]
+        learn_i(np.hstack([inp,inp_m1]), 
+                np.hstack([target,target_m1]), 
+                weights, alpha, 101)
+        if i%10==0:
+            aa, zz = nnFunc(inp, weights)
+            ee = aa[-1]-target
+            aa, zz = nnFunc(inp_m1, weights)
+            ee2 = aa[-1]-target_m1
+            print("SUMMARY:",
+                  "max=",ee.max(),
+                  "min=",ee.min(), 
+                  "mean_sqr=",(ee*ee).mean(),
+                  "max_m1=",ee2.max(),
+                  "min_m1=",ee2.min(), 
+                  "mean_sqr_m1=",(ee2*ee2).mean()  
+                 )
     
 def invertVal(val, state):
     if state is DRAW:
