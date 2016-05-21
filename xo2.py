@@ -1,4 +1,6 @@
 import numpy as np
+import copy
+
 BSIZE = 3
 EMPTY = 0
 X = 1
@@ -11,7 +13,7 @@ DRAW = "DRAW"
 NONTERMINAL = "NONTERMINAL"
 
 # LAYERS = [64, 64, 1]
-LAYERS = [16,16, 1]
+LAYERS = [64,32, 1]
 
 DEBUG = False
 
@@ -118,7 +120,8 @@ def getMove(board, side):
             
  
 def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000, 
-            reset_weights = False, save_games=False):
+            reset_weights = False, save_games=False, 
+            learn_weights = True):
     global ALPHA
     ALPHA = alpha
     if 'weights' not in globals() or reset_weights:
@@ -160,36 +163,33 @@ def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000,
             
             global games_history
             if 'games_history' not in globals():
-                games_history = [board_reps, targets]
+                games_history = [[board_reps], [targets]]
             else:
-                games_history[0] = np.hstack([games_history[0], board_reps])
-                games_history[1] = np.hstack([games_history[1], targets])
+                games_history[0].append(board_reps)
+                games_history[1].append(targets)
                 
-            global final_games
-            last_board = b.copy()
-            # undoMove(last_board,m)
-            m_side = m.side
-            final_games.append([last_board, m, s, v, target_val,
-                                boardRep(last_board, m_side)])
+            if ii%100==0:
+                print(wins)
         
-        for b,m,v,s in reversed(board_history):
-            if DEBUG:
-                print("1")
-                print(b,m)
-            val, state, deriv = calcValAndDeriv(b, m, target_val)
-            max_dw, max_db = updateWeights(weights, deriv, alpha)
-            new_val, junk1, junk2 = calcVal(b, m)
-            if DEBUG:
-                print("val:",v,"target:",target_val,"val_after_update",new_val)
-            cost = (new_val - val)**2
-            if cost > largest_cost_update:
-                largest_cost_update=cost
-            target_val = invertVal(new_val,state)
-        if (ii+1)%100==0:
-            print("num games:",ii+1,"cost:",largest_cost_update, 
-            "wins:",wins)
-            wins = {OWIN:0,XWIN:0,DRAW:0}
-            largest_cost_update = 0
+        if learn_weights:
+            for b,m,v,s in reversed(board_history):
+                if DEBUG:
+                    print("1")
+                    print(b,m)
+                val, state, deriv = calcValAndDeriv(b, m, target_val)
+                max_dw, max_db = updateWeights(weights, deriv, alpha)
+                new_val, junk1, junk2 = calcVal(b, m)
+                if DEBUG:
+                    print("val:",v,"target:",target_val,"val_after_update",new_val)
+                cost = (new_val - val)**2
+                if cost > largest_cost_update:
+                    largest_cost_update=cost
+                target_val = invertVal(new_val,state)
+            if (ii+1)%100==0:
+                print("num games:",ii+1,"cost:",largest_cost_update, 
+                "wins:",wins)
+                wins = {OWIN:0,XWIN:0,DRAW:0}
+                largest_cost_update = 0
  
 def updateWeights(weights, deriv, alpha):
     max_dw, max_db = np.float64('-inf'),np.float64('-inf') 
@@ -253,31 +253,27 @@ def calcValAndDerivRaw(board_reps, y, weights):
     deriv = valFunc_deriv(activations, zs, weights, y)
     return (activations, zs, deriv)
 
-def fastLearn(reset_games=False, reset_weights=False, 
-              n_games = 10000, n_updates = 10000, alpha = 0.01):
-    if reset_games:
-        global final_games
-        final_games = []
-    if reset_weights:
-        global fast_weights
-        fast_weights = createWeights()
-    if n_games>0:
-        # create random games, last to final position is added to final_games
-        learnXO(reset_weights=True, num_games=n_games, alpha = 0.1, epsilon=1, save_games=True)
-#    rr=np.hstack(
-#        [ np.hstack([r1 for b,m,s,v,r1,r2 in final_games]),
-#          np.hstack([r2 for b,m,s,v,r1,r2 in final_games]) ]
-#                )
-#    ss=np.hstack(
-#        [ np.hstack([v for b,m,s,v,r1,r2 in final_games]).reshape([1,-1]),
-#          np.hstack([1-v for b,m,s,v,r1,r2 in final_games]).reshape([1,-1]) ]
-#        )
+def fastLearn(fast_weights,
+              n_cycles = 10,
+              n_games = 10000, epsilon = 0.1, 
+              n_updates = 1000, alpha = 1):
+    for n in range(n_cycles):
+        print("cycle:",n)
+        global games_history
+        if 'games_history' in globals():
+            del games_history
+        global weights
+        weights = copy.deepcopy(fast_weights)
+        learnXO(reset_weights=False, num_games=n_games, 
+                alpha = 0.1, # not in use since learn_weights is False
+                epsilon=epsilon, save_games=True,
+                learn_weights=False)
         
-    rr = np.hstack([r for b,m,s,v,t,r in final_games])
-    ss = np.hstack([t for b,m,s,v,t,r in final_games]).reshape([1,-1])
-    
-    learn_i(inp=rr, target=ss, weights=fast_weights, 
-            alpha=alpha, n_updates=n_updates)
+        rr = np.hstack(games_history[0])
+        tt = np.hstack(games_history[1])
+
+        learn_i(inp=rr, target=tt, weights=fast_weights, 
+                alpha=alpha, n_updates=n_updates)
 
 
 def learn_i(inp, target, weights, alpha, n_updates):
