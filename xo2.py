@@ -290,12 +290,13 @@ def createLearningData(nsteps):
     bb=np.hstack(bb)
     tt=np.hstack(tt)
     return bb,tt
-def learn_i(inp, target, weights, alpha, n_updates):
-    # print("using",inp.shape, target.shape)
+def learn_i(inp, target, weights, alpha, n_updates, batch_size=1000):
     for i in range(1,n_updates):
-        activations, zs, deriv = calcValAndDerivRaw(inp,target,weights)
+        jj = np.random.randint(0,inp.shape[1],batch_size)
+        activations, zs, deriv = calcValAndDerivRaw(inp[:,jj],target[:,jj],weights)
         max_dw, max_db = updateWeights(weights, deriv, alpha)
         if i%100==0:
+            activations, zs, deriv = calcValAndDerivRaw(inp,target,weights)
             ee = activations[-1]-target
             print("max=",ee.max(),
                   "min=",ee.min(), 
