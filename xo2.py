@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.pyplot as plt
 import copy
 
 BSIZE = 3
@@ -23,20 +24,20 @@ def createBoard():
     return board
 
     
-def randArray(shape):
+def randArray(shape, scale):
     dd = np.prod(shape)
-    rv = np.random.rand(dd)*2.0-1.0
+    rv = np.random.rand(dd)*2.0*scale-scale
     return rv.reshape(shape)
     
-def randWeightsAndBias(in_dim, out_dim):
-    return [randArray([out_dim,in_dim]),randArray([out_dim,1])]
+def randWeightsAndBias(in_dim, out_dim, scale):
+    return [randArray([out_dim,in_dim,scale]),randArray([out_dim,1,scale])]
         
     
-def createWeights():
+def createWeights(scale=1.0):
     rv =[]
     previous_layer = boardRep(createBoard(),X).shape[0]
     for new_layer in LAYERS:
-        rv.append(randWeightsAndBias(previous_layer, new_layer))
+        rv.append(randWeightsAndBias(previous_layer, new_layer, scale))
         previous_layer = new_layer
     return rv
 
@@ -157,9 +158,9 @@ def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000,
         
         if save_games:
             targets=[target_val if i%2==0 else 1-target_val for i in range(len(board_history))]
-            targets=np.hstack(targets).reshape([1,-1])
+            # targets=np.hstack(targets).reshape([1,-1])
             board_reps=[boardRep(b,m.side) for b,m,v,s in board_history]
-            board_reps=np.hstack(board_reps)
+            # board_reps=np.hstack(board_reps)
             
             global games_history
             if 'games_history' not in globals():
@@ -269,13 +270,26 @@ def fastLearn(fast_weights,
                 epsilon=epsilon, save_games=True,
                 learn_weights=False)
         
-        rr = np.hstack(games_history[0])
-        tt = np.hstack(games_history[1])
+#        rr = np.hstack(games_history[0])
+#        tt = np.hstack(games_history[1])
+#
+#        learn_i(inp=rr, target=tt, weights=fast_weights, 
+#                alpha=alpha, n_updates=n_updates)
 
-        learn_i(inp=rr, target=tt, weights=fast_weights, 
-                alpha=alpha, n_updates=n_updates)
-
-
+def createLearningData(nsteps):
+    bb=[]
+    tt=[]
+    for nn in range(1, nsteps+1):
+        tmp_bb = np.hstack([games_history[0][i][-nn] for i in range(len(games_history[0])) if len(games_history[0][i])>=nn])
+        tmp_tt = np.hstack([games_history[1][i][-nn] for i in range(len(games_history[1])) if len(games_history[1][i])>=nn]).reshape([1,-1])
+        if len(tmp_bb)>0 and len(tmp_tt)>0:
+            bb.append(tmp_bb)
+            tt.append(tmp_tt)
+        else:
+            assert(len(tmp_bb)==0 and len(tmp_tt)==0)
+    bb=np.hstack(bb)
+    tt=np.hstack(tt)
+    return bb,tt
 def learn_i(inp, target, weights, alpha, n_updates):
     # print("using",inp.shape, target.shape)
     for i in range(1,n_updates):
