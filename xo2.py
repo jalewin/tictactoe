@@ -68,29 +68,21 @@ def chooseNextMove(board, side, epsilon):
         it.iternext()
     
     # returns first instance of max score
-    best_idx = np.unravel_index(scores.argmax())
+    best_idx = np.unravel_index(scores.argmax(), scores.shape)
     best_val = scores[best_idx]
     best_move = Move(best_idx, side)
     chose_rand = False
     
     if epsilon>0 and np.random.rand() < epsilon:
         idxs = np.where(board==EMPTY)
-        ii = np.random.randint(0,len(idxs[0]))
-        rand_idx = tuple([idxs[j][ii] for j in range(len(idxs))])
-        best_move = Move(rand_idx, side)
-        chose_rand = True
-    
-    
-    win = checkWin(board, best_move)
-    state = NONTERMINAL
-    if win:
-        state={O:OWIN,X:XWIN}[best_move.side]
-        # val = 1.0
-    elif (board==EMPTY).sum()==0:
-        state = DRAW
-        # val = 0.5  
-
-    return (best_move, best_val, state, chose_rand, scores)
+        if len(idxs[0])>0:
+            ii = np.random.randint(0,len(idxs[0]))
+            rand_idx = tuple([idxs[j][ii] for j in range(len(idxs))])
+            best_move = Move(rand_idx, side)
+            chose_rand = True
+     
+    # note that val is the max value. In case of random move might not be val of move
+    return (best_move, best_val, chose_rand, scores)
     
  
 def playHuman(human_first=True):
@@ -105,11 +97,11 @@ def playHuman(human_first=True):
         if side==human_side:
             move = getMove(board, side)
         else:
-            move, c_val, c_state, c_rand, scores = chooseNextMove(board, side, epsilon=0)
+            move, c_val, c_rand, scores = chooseNextMove(board, side, epsilon=0)
         
+        state = checkWin(board, move)
         makeMove(board, move)
         val, rv = calcVal(board, move)
-        ## TODOJ - add checkWIn to calculate state
        
         if side==human_side:
             print("val=",val)
@@ -160,9 +152,9 @@ def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000,
         current_side = X
         while state is NONTERMINAL:
             # TODOJ - choose only 1 random move in a game? need to make the random choice at a uniform stage
-            current_move, current_val, state, is_rand, scores = chooseNextMove(board, current_side, epsilon)
+            current_move, current_val, is_rand, scores = chooseNextMove(board, current_side, epsilon)
+            state = checkWin(board, current_move)
             makeMove(board, current_move)
-            # print(board, current_move, current_val, state)
             tmp=(board.copy(), current_move, current_val, state)
             board_history.append(tmp)
             current_side = {O:X,X:O}[current_side]
@@ -179,9 +171,9 @@ def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000,
         wins[s]+=1
         
         if save_games:
-            # TODOJ - make targets the value of the nnFunc and only the last value the game value.
-            targets=[target_val if i%2==0 else 1-target_val for i in range(len(board_history))]
-            targets.reverse()
+            # targets are the value of the next nnFunc and only the last value the game value.
+            targets=[1.0-v for b,m,v,s in board_history]
+            targets=targets[1:] + [target_val]
             # targets=np.hstack(targets).reshape([1,-1])
             board_reps=[boardRep(b,m.side) for b,m,v,s in board_history]
             # board_reps=np.hstack(board_reps)
@@ -235,35 +227,27 @@ def actionReward(board, move):
     return val
 
 def makeMove(board, move):
+    if board[move.ii,move.jj]!=EMPTY:
+        print(board)
+        print(move)
     assert(board[move.ii,move.jj]==EMPTY)
     board[move.ii,move.jj]=move.side
     
 def undoMove(board, move):
     assert(board[move.ii,move.jj]!=EMPTY)
-    board[move.ii,move.jj]=EMPTY
-    return board
-    
+    board[move.ii,move.jj]=EMPTY  
 
 def boardRep(board, side):
-    other_side = {O:X,X:O}[side]
+    # other_side = {O:X,X:O}[side]
     tmp = board.reshape([-1,1])
     # return np.vstack((tmp==side, tmp==other_side, tmp==EMPTY)).astype(np.float64)
     return np.vstack((side==X, tmp==X, tmp==O, tmp==EMPTY)).astype(np.float64)
 
 def calcVal(board, last_move):
-#    win = checkWin(board, last_move)
-#    state = NONTERMINAL
-#    if win:
-#        state={O:OWIN,X:XWIN}[last_move.side]
-#        # val = 1.0
-#    elif (board==EMPTY).sum()==0:
-#        state = DRAW
-#        # val = 0.5
     board_rep = boardRep(board, last_move.side)
     rv = valFunc(board_rep, weights)
     val = rv[0][-1]
     return (val, rv)
-    #  return (val, state, rv)
     
 def calcValAndDeriv(board, last_move, y):
     # forward
@@ -412,10 +396,15 @@ def sigmaFunc_deriv(z):
     return 1.0*(z>0)
     
 def checkWin(board, move):
-    board = makeMove(board, move)
-    rv = checkWin_i(board, move)
-    board = undoMove(board, move)
-    return rv
+    makeMove(board, move)
+    win = checkWin_i(board, move)
+    state = NONTERMINAL
+    if win:
+        state={O:OWIN,X:XWIN}[move.side]
+    elif (board==EMPTY).sum()==0:
+        state = DRAW
+    undoMove(board, move)
+    return state
 
 def checkWin_i(board, last_move):
     val = last_move.side
