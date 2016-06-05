@@ -14,7 +14,7 @@ DRAW = "DRAW"
 NONTERMINAL = "NONTERMINAL"
 
 # LAYERS = [64, 64, 1]
-LAYERS = [64,32, 1]
+LAYERS = [64, 32, 32, 1]
 
 DEBUG = False
 
@@ -23,6 +23,10 @@ def createBoard():
     board.fill(EMPTY)
     return board
 
+def createScoreBoard():
+    board = np.empty([BSIZE,BSIZE],dtype=np.float64)
+    board.fill(-1.0)
+    return board
     
 def randArray(shape, scale):
     dd = np.prod(shape)
@@ -30,7 +34,7 @@ def randArray(shape, scale):
     return rv.reshape(shape)
     
 def randWeightsAndBias(in_dim, out_dim, scale):
-    return [randArray([out_dim,in_dim,scale]),randArray([out_dim,1,scale])]
+    return [randArray([out_dim,in_dim],scale),randArray([out_dim,1],scale)]
         
     
 def createWeights(scale=1.0):
@@ -52,48 +56,65 @@ class Move:
 
 def chooseNextMove(board, side, epsilon):
     it = np.nditer(board, flags=['multi_index'])
+    scores = createScoreBoard()
+    scores[board==EMPTY] = -2
+
+    while not it.finished:
+        if it[0]==EMPTY:
+            move = Move(it.multi_index,side)
+            val = actionReward(board, move)
+            # print(it.multi_index, val)
+            scores[it.multi_index] = val
+        it.iternext()
+    
+    # returns first instance of max score
+    best_idx = np.unravel_index(scores.argmax())
+    best_val = scores[best_idx]
+    best_move = Move(best_idx, side)
+    chose_rand = False
+    
     if epsilon>0 and np.random.rand() < epsilon:
-        num_empty = (board==EMPTY).sum()
-        nchoice = np.random.randint(0,num_empty)
-        nn = 0
-        while not it.finished:
-            if it[0]==EMPTY:
-                if nn==nchoice:
-                    move = Move(it.multi_index,side)
-                    val,state = actionReward(board, move)
-                    return (move, val, state)
-                nn+=1
-            it.iternext()
-    else:
-        best_move = None
-        best_val = float('-inf')
-        best_state = NONTERMINAL
-        while not it.finished:
-            if it[0]==EMPTY:
-                move = Move(it.multi_index,side)
-                val,state = actionReward(board, move)
-                if val>best_val or best_move is None:
-                    best_val = val
-                    best_move = move
-                    best_state = state
-            it.iternext()
-    return (best_move, best_val, best_state)
+        idxs = np.where(board==EMPTY)
+        ii = np.random.randint(0,len(idxs[0]))
+        rand_idx = tuple([idxs[j][ii] for j in range(len(idxs))])
+        best_move = Move(rand_idx, side)
+        chose_rand = True
+    
+    
+    win = checkWin(board, best_move)
+    state = NONTERMINAL
+    if win:
+        state={O:OWIN,X:XWIN}[best_move.side]
+        # val = 1.0
+    elif (board==EMPTY).sum()==0:
+        state = DRAW
+        # val = 0.5  
+
+    return (best_move, best_val, state, chose_rand, scores)
+    
  
 def playHuman(human_first=True):
     board = createBoard()
     move = Move((0,0,0),O)
     state = NONTERMINAL
     side = X
-    human_side = human_first and X or O
+    human_side = X if human_first else O
     while state is NONTERMINAL:
+        print()
         print(board)
         if side==human_side:
             move = getMove(board, side)
         else:
-            move, c_val, c_state = chooseNextMove(board, side, epsilon=0)
+            move, c_val, c_state, c_rand, scores = chooseNextMove(board, side, epsilon=0)
+        
         makeMove(board, move)
-        val, state, rv = calcVal(board, move)
-        print(val)
+        val, rv = calcVal(board, move)
+        ## TODOJ - add checkWIn to calculate state
+       
+        if side==human_side:
+            print("val=",val)
+        else:
+            print(scores)
         side = {O:X,X:O}[side]
     print(board)
     print(state)
@@ -138,7 +159,8 @@ def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000,
         state = NONTERMINAL
         current_side = X
         while state is NONTERMINAL:
-            current_move, current_val, state = chooseNextMove(board, current_side, epsilon)
+            # TODOJ - choose only 1 random move in a game? need to make the random choice at a uniform stage
+            current_move, current_val, state, is_rand, scores = chooseNextMove(board, current_side, epsilon)
             makeMove(board, current_move)
             # print(board, current_move, current_val, state)
             tmp=(board.copy(), current_move, current_val, state)
@@ -157,7 +179,9 @@ def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000,
         wins[s]+=1
         
         if save_games:
+            # TODOJ - make targets the value of the nnFunc and only the last value the game value.
             targets=[target_val if i%2==0 else 1-target_val for i in range(len(board_history))]
+            targets.reverse()
             # targets=np.hstack(targets).reshape([1,-1])
             board_reps=[boardRep(b,m.side) for b,m,v,s in board_history]
             # board_reps=np.hstack(board_reps)
@@ -168,18 +192,15 @@ def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000,
             else:
                 games_history[0].append(board_reps)
                 games_history[1].append(targets)
-                
-            if ii%100==0:
-                print(wins)
         
         if learn_weights:
             for b,m,v,s in reversed(board_history):
                 if DEBUG:
                     print("1")
                     print(b,m)
-                val, state, deriv = calcValAndDeriv(b, m, target_val)
+                val, deriv = calcValAndDeriv(b, m, target_val)
                 max_dw, max_db = updateWeights(weights, deriv, alpha)
-                new_val, junk1, junk2 = calcVal(b, m)
+                new_val, junk1 = calcVal(b, m)
                 if DEBUG:
                     print("val:",v,"target:",target_val,"val_after_update",new_val)
                 cost = (new_val - val)**2
@@ -191,6 +212,8 @@ def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000,
                 "wins:",wins)
                 wins = {OWIN:0,XWIN:0,DRAW:0}
                 largest_cost_update = 0
+    
+    print(wins)
  
 def updateWeights(weights, deriv, alpha):
     max_dw, max_db = np.float64('-inf'),np.float64('-inf') 
@@ -207,9 +230,9 @@ def updateWeights(weights, deriv, alpha):
             
 def actionReward(board, move):
     makeMove(board, move)
-    val, state, rv = calcVal(board, move)
+    val, rv = calcVal(board, move)
     undoMove(board, move)
-    return (val, state)
+    return val
 
 def makeMove(board, move):
     assert(board[move.ii,move.jj]==EMPTY)
@@ -224,28 +247,30 @@ def undoMove(board, move):
 def boardRep(board, side):
     other_side = {O:X,X:O}[side]
     tmp = board.reshape([-1,1])
-    return np.vstack((tmp==side, tmp==other_side, tmp==EMPTY)).astype(np.float64)
+    # return np.vstack((tmp==side, tmp==other_side, tmp==EMPTY)).astype(np.float64)
+    return np.vstack((side==X, tmp==X, tmp==O, tmp==EMPTY)).astype(np.float64)
 
 def calcVal(board, last_move):
-    win = checkWin(board, last_move)
-    state = NONTERMINAL
-    if win:
-        state={O:OWIN,X:XWIN}[last_move.side]
-        # val = 1.0
-    elif (board==EMPTY).sum()==0:
-        state = DRAW
-        # val = 0.5
+#    win = checkWin(board, last_move)
+#    state = NONTERMINAL
+#    if win:
+#        state={O:OWIN,X:XWIN}[last_move.side]
+#        # val = 1.0
+#    elif (board==EMPTY).sum()==0:
+#        state = DRAW
+#        # val = 0.5
     board_rep = boardRep(board, last_move.side)
     rv = valFunc(board_rep, weights)
     val = rv[0][-1]
-    return (val, state, rv)
+    return (val, rv)
+    #  return (val, state, rv)
     
 def calcValAndDeriv(board, last_move, y):
     # forward
-    final_val, state, (activations, zs) = calcVal(board, last_move)
+    final_val, (activations, zs) = calcVal(board, last_move)
     # backprop
     deriv = valFunc_deriv(activations, zs, weights, y)
-    return (final_val, state, deriv)
+    return (final_val, deriv)
     
 def calcValAndDerivRaw(board_reps, y, weights):
     # forward
@@ -257,7 +282,7 @@ def calcValAndDerivRaw(board_reps, y, weights):
 def fastLearn(fast_weights,
               n_cycles = 10,
               n_games = 10000, epsilon = 0.1, 
-              n_updates = 1000, alpha = 1):
+              n_processed = 1e7, decay = 0.7, alpha = 1, batch_size=0):
     for n in range(n_cycles):
         print("cycle:",n)
         global games_history
@@ -269,33 +294,49 @@ def fastLearn(fast_weights,
                 alpha = 0.1, # not in use since learn_weights is False
                 epsilon=epsilon, save_games=True,
                 learn_weights=False)
+                
+        dd=createLearningData(games_history)
         
-#        rr = np.hstack(games_history[0])
-#        tt = np.hstack(games_history[1])
-#
-#        learn_i(inp=rr, target=tt, weights=fast_weights, 
-#                alpha=alpha, n_updates=n_updates)
+        max_processed = n_processed
+        for ii in range(len(dd)):
+            print("stage",ii, "data set size",dd[ii][0].shape)
+            learn_i(inp=dd[ii][0], target=dd[ii][1], weights=fast_weights, 
+                    alpha=alpha, max_processed=max_processed, batch_size=batch_size)
+            max_processed *= decay
+        
 
-def createLearningData(nsteps):
-    bb=[]
-    tt=[]
-    for nn in range(1, nsteps+1):
-        tmp_bb = np.hstack([games_history[0][i][-nn] for i in range(len(games_history[0])) if len(games_history[0][i])>=nn])
-        tmp_tt = np.hstack([games_history[1][i][-nn] for i in range(len(games_history[1])) if len(games_history[1][i])>=nn]).reshape([1,-1])
+def createLearningData(games):
+    input_target_list=[]
+    nn = 0
+    while True:
+        nn += 1
+        tmp_bb = [games[0][i][-nn] for i in range(len(games[0])) 
+                  if len(games[0][i])>=nn]
+        tmp_tt = [games[1][i][-nn] for i in range(len(games[1])) 
+                  if len(games[1][i])>=nn]
         if len(tmp_bb)>0 and len(tmp_tt)>0:
-            bb.append(tmp_bb)
-            tt.append(tmp_tt)
+            input_target_list.append([np.hstack(tmp_bb), 
+                                      np.hstack(tmp_tt).reshape([1,-1])])
         else:
             assert(len(tmp_bb)==0 and len(tmp_tt)==0)
-    bb=np.hstack(bb)
-    tt=np.hstack(tt)
-    return bb,tt
-def learn_i(inp, target, weights, alpha, n_updates, batch_size=1000):
-    for i in range(1,n_updates):
-        jj = np.random.randint(0,inp.shape[1],batch_size)
-        activations, zs, deriv = calcValAndDerivRaw(inp[:,jj],target[:,jj],weights)
+            break 
+    return input_target_list
+    
+    
+def learn_i(inp, target, weights, alpha, max_processed, batch_size=1000):
+    processed = 0
+    next_print = 0
+    while processed < max_processed:
+        if batch_size > 0:
+            jj = np.random.randint(0,inp.shape[1],batch_size)
+            activations, zs, deriv = calcValAndDerivRaw(inp[:,jj],target[:,jj],weights)
+            processed += batch_size
+        else:
+            activations, zs, deriv = calcValAndDerivRaw(inp, target, weights)
+            processed += inp.shape[1]
         max_dw, max_db = updateWeights(weights, deriv, alpha)
-        if i%100==0:
+        if processed > next_print:
+            next_print = processed + 1e6
             activations, zs, deriv = calcValAndDerivRaw(inp,target,weights)
             ee = activations[-1]-target
             print("max=",ee.max(),
@@ -305,27 +346,6 @@ def learn_i(inp, target, weights, alpha, n_updates, batch_size=1000):
                   "max dw=",max_dw,
                   "max db=",max_db)
 
-def alternate_learn(inp, target, inp_m1, weights, alpha, n_updates):
-    for i in range(1,n_updates):
-        # learn_i(inp, target, weights, alpha, 101)
-        aa, zz = nnFunc(inp, weights)
-        target_m1 = 1.0-aa[-1]
-        learn_i(np.hstack([inp,inp_m1]), 
-                np.hstack([target,target_m1]), 
-                weights, alpha, 101)
-        if i%10==0:
-            aa, zz = nnFunc(inp, weights)
-            ee = aa[-1]-target
-            aa, zz = nnFunc(inp_m1, weights)
-            ee2 = aa[-1]-target_m1
-            print("SUMMARY:",
-                  "max=",ee.max(),
-                  "min=",ee.min(), 
-                  "mean_sqr=",(ee*ee).mean(),
-                  "max_m1=",ee2.max(),
-                  "min_m1=",ee2.min(), 
-                  "mean_sqr_m1=",(ee2*ee2).mean()  
-                 )
     
 def invertVal(val, state):
     if state is DRAW:
@@ -390,8 +410,14 @@ def sigmaFunc(z):
 
 def sigmaFunc_deriv(z):
     return 1.0*(z>0)
+    
+def checkWin(board, move):
+    board = makeMove(board, move)
+    rv = checkWin_i(board, move)
+    board = undoMove(board, move)
+    return rv
 
-def checkWin(board, last_move):
+def checkWin_i(board, last_move):
     val = last_move.side
     ii = last_move.ii
     jj = last_move.jj
@@ -427,75 +453,3 @@ def checkWin(board, last_move):
             return True
     return False
     
-
-
-##########################################################
-
-def update_mini_batch(self, mini_batch, eta):
-    """Update the network's weights and biases by applying
-    gradient descent using backpropagation to a single mini batch.
-    The "mini_batch" is a list of tuples "(x, y)", and "eta"
-    is the learning rate."""
-    nabla_b = [np.zeros(b.shape) for b in self.biases]
-    nabla_w = [np.zeros(w.shape) for w in self.weights]
-    for x, y in mini_batch:
-        delta_nabla_b, delta_nabla_w = self.backprop(x, y)
-        nabla_b = [nb+dnb for nb, dnb in zip(nabla_b, delta_nabla_b)]
-        nabla_w = [nw+dnw for nw, dnw in zip(nabla_w, delta_nabla_w)]
-    self.weights = [w-(eta/len(mini_batch))*nw 
-                    for w, nw in zip(self.weights, nabla_w)]
-    self.biases = [b-(eta/len(mini_batch))*nb 
-                   for b, nb in zip(self.biases, nabla_b)]
-                           
-def backprop(self, x, y):
-    """Return a tuple "(nabla_b, nabla_w)" representing the
-    gradient for the cost function C_x.  "nabla_b" and
-    "nabla_w" are layer-by-layer lists of numpy arrays, similar
-    to "self.biases" and "self.weights"."""
-    nabla_b = [np.zeros(b.shape) for b in self.biases]
-    nabla_w = [np.zeros(w.shape) for w in self.weights]
-    # feedforward
-    activation = x
-    activations = [x] # list to store all the activations, layer by layer
-    zs = [] # list to store all the z vectors, layer by layer
-    for b, w in zip(self.biases, self.weights):
-        z = np.dot(w, activation)+b
-        zs.append(z)
-        activation = sigmoid(z)
-        activations.append(activation)
-    # backward pass
-    delta = self.cost_derivative(activations[-1], y) * \
-        sigmoid_prime(zs[-1])
-    nabla_b[-1] = delta
-    nabla_w[-1] = np.dot(delta, activations[-2].transpose())
-    # Note that the variable l in the loop below is used a little
-    # differently to the notation in Chapter 2 of the book.  Here,
-    # l = 1 means the last layer of neurons, l = 2 is the
-    # second-last layer, and so on.  It's a renumbering of the
-    # scheme in the book, used here to take advantage of the fact
-    # that Python can use negative indices in lists.
-    for l in range(2, self.num_layers):
-        z = zs[-l]
-        sp = sigmoid_prime(z)
-        delta = np.dot(self.weights[-l+1].transpose(), delta) * sp
-        nabla_b[-l] = delta
-        nabla_w[-l] = np.dot(delta, activations[-l-1].transpose())
-    return (nabla_b, nabla_w)
-
-
-def cost_derivative(self, output_activations, y):
-    """Return the vector of partial derivatives \partial C_x /
-    \partial a for the output activations."""
-    return (output_activations-y) 
-
-def sigmoid(z):
-    """The sigmoid function."""
-    return 1.0/(1.0+np.exp(-z))
-
-def sigmoid_prime(z):
-    """Derivative of the sigmoid function."""
-    return sigmoid(z)*(1-sigmoid(z))
-
-#######################################################################
-
-
