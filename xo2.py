@@ -54,7 +54,7 @@ class Move:
     def __repr__(self):
         return "Move(%s,%s)" % ((self.ii, self.jj),["none","X","O"][self.side])
 
-def chooseNextMove(board, side, epsilon):
+def chooseNextMove(weights, board, side, epsilon):
     it = np.nditer(board, flags=['multi_index'])
     scores = createScoreBoard()
     scores[board==EMPTY] = -2
@@ -62,7 +62,7 @@ def chooseNextMove(board, side, epsilon):
     while not it.finished:
         if it[0]==EMPTY:
             move = Move(it.multi_index,side)
-            val = actionReward(board, move)
+            val = actionReward(weights, board, move)
             # print(it.multi_index, val)
             scores[it.multi_index] = val
         it.iternext()
@@ -85,7 +85,7 @@ def chooseNextMove(board, side, epsilon):
     return (best_move, best_val, chose_rand, scores)
     
  
-def playHuman(human_first=True):
+def playHuman(weights, human_first=True):
     board = createBoard()
     move = Move((0,0,0),O)
     state = NONTERMINAL
@@ -97,11 +97,11 @@ def playHuman(human_first=True):
         if side==human_side:
             move = getMove(board, side)
         else:
-            move, c_val, c_rand, scores = chooseNextMove(board, side, epsilon=0)
+            move, c_val, c_rand, scores = chooseNextMove(weights, board, side, epsilon=0)
         
         state = checkWin(board, move)
         makeMove(board, move)
-        val, rv = calcVal(board, move)
+        val, rv = calcVal(weights, board, move)
        
         if side==human_side:
             print("val=",val)
@@ -133,14 +133,14 @@ def getMove(board, side):
     return move
             
  
-def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000, 
+def learnXO(weights, alpha = 0.001, epsilon = 0.05, num_games = 10000, 
             reset_weights = False, save_games=False, 
             learn_weights = True):
     global ALPHA
     ALPHA = alpha
-    if 'weights' not in globals() or reset_weights:
-        global weights
-        weights = createWeights()
+#    if 'weights' not in globals() or reset_weights:
+#        global weights
+#        weights = createWeights()
     wins = {OWIN:0,XWIN:0,DRAW:0}
     largest_cost_update = 0
 
@@ -152,7 +152,7 @@ def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000,
         current_side = X
         while state is NONTERMINAL:
             # TODOJ - choose only 1 random move in a game? need to make the random choice at a uniform stage
-            current_move, current_val, is_rand, scores = chooseNextMove(board, current_side, epsilon)
+            current_move, current_val, is_rand, scores = chooseNextMove(weights, board, current_side, epsilon)
             state = checkWin(board, current_move)
             makeMove(board, current_move)
             tmp=(board.copy(), current_move, current_val, state)
@@ -174,9 +174,11 @@ def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000,
             # targets are the value of the next nnFunc and only the last value the game value.
             targets=[1.0-v for b,m,v,s in board_history]
             targets=targets[1:] + [target_val]
-            # targets=np.hstack(targets).reshape([1,-1])
             board_reps=[boardRep(b,m.side) for b,m,v,s in board_history]
-            # board_reps=np.hstack(board_reps)
+#            print(board_history)
+#            print(np.hstack(board_reps))
+#            print(np.hstack(targets))
+#            return None
             
             global games_history
             if 'games_history' not in globals():
@@ -190,9 +192,9 @@ def learnXO(alpha = 0.001, epsilon = 0.05, num_games = 10000,
                 if DEBUG:
                     print("1")
                     print(b,m)
-                val, deriv = calcValAndDeriv(b, m, target_val)
+                val, deriv = calcValAndDeriv(weights, b, m, target_val)
                 max_dw, max_db = updateWeights(weights, deriv, alpha)
-                new_val, junk1 = calcVal(b, m)
+                new_val, junk1 = calcVal(weights, b, m)
                 if DEBUG:
                     print("val:",v,"target:",target_val,"val_after_update",new_val)
                 cost = (new_val - val)**2
@@ -220,9 +222,9 @@ def updateWeights(weights, deriv, alpha):
         b-=alpha*db
     return max_dw, max_db
             
-def actionReward(board, move):
+def actionReward(weights, board, move):
     makeMove(board, move)
-    val, rv = calcVal(board, move)
+    val, rv = calcVal(weights, board, move)
     undoMove(board, move)
     return val
 
@@ -242,16 +244,22 @@ def boardRep(board, side):
     tmp = board.reshape([-1,1])
     # return np.vstack((tmp==side, tmp==other_side, tmp==EMPTY)).astype(np.float64)
     return np.vstack((side==X, tmp==X, tmp==O, tmp==EMPTY)).astype(np.float64)
+    
+def repToBoard(rep):
+    bb = createBoard()
+    bb[(rep[1:10:1]==1).reshape([3,3])]=X
+    bb[(rep[10:19:1]==1).reshape([3,3])]=O
+    return bb
 
-def calcVal(board, last_move):
+def calcVal(weights, board, last_move):
     board_rep = boardRep(board, last_move.side)
     rv = valFunc(board_rep, weights)
     val = rv[0][-1]
     return (val, rv)
     
-def calcValAndDeriv(board, last_move, y):
+def calcValAndDeriv(weights, board, last_move, y):
     # forward
-    final_val, (activations, zs) = calcVal(board, last_move)
+    final_val, (activations, zs) = calcVal(weights, board, last_move)
     # backprop
     deriv = valFunc_deriv(activations, zs, weights, y)
     return (final_val, deriv)
@@ -272,9 +280,9 @@ def fastLearn(fast_weights,
         global games_history
         if 'games_history' in globals():
             del games_history
-        global weights
+        # global weights
         weights = copy.deepcopy(fast_weights)
-        learnXO(reset_weights=False, num_games=n_games, 
+        learnXO(weights, reset_weights=False, num_games=n_games, 
                 alpha = 0.1, # not in use since learn_weights is False
                 epsilon=epsilon, save_games=True,
                 learn_weights=False)
