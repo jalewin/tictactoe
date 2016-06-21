@@ -1,6 +1,8 @@
 import numpy as np
+# from ggplot import *
 import matplotlib.pyplot as plt
 import copy
+import pandas as pd
 
 BSIZE = 3
 EMPTY = 0
@@ -17,6 +19,26 @@ NONTERMINAL = "NONTERMINAL"
 LAYERS = [64, 32, 32, 1]
 
 DEBUG = False
+
+def createWinningBoards():
+    brds={X:[],O:[]}
+    for side in [X,O]:
+        for j in range(BSIZE):
+            bb = createBoard()
+            for i in range(BSIZE): 
+                makeMove(bb, Move((j,i),side))
+                bb2 = bb.copy()
+            brds[side].append(bb)
+            brds[side].append(bb2.T)
+        bb = createBoard()
+        for i in range(BSIZE):
+            makeMove(bb, Move((i,i), side))
+        brds[side].append(bb)
+        bb = createBoard()
+        for i in range(BSIZE):
+            makeMove(bb, Move((i,BSIZE-1-i), side))
+        brds[side].append(bb)
+    return brds
 
 def createBoard():
     board = np.empty([BSIZE,BSIZE],dtype=np.int32)
@@ -54,19 +76,23 @@ class Move:
     def __repr__(self):
         return "Move(%s,%s)" % ((self.ii, self.jj),["none","X","O"][self.side])
 
-def chooseNextMove(weights, board, side, epsilon):
+
+def getScores(weights, board, side):
     it = np.nditer(board, flags=['multi_index'])
     scores = createScoreBoard()
     scores[board==EMPTY] = -2
-
     while not it.finished:
         if it[0]==EMPTY:
             move = Move(it.multi_index,side)
             val = actionReward(weights, board, move)
             # print(it.multi_index, val)
             scores[it.multi_index] = val
-        it.iternext()
-    
+        it.iternext()   
+    return scores
+
+def chooseNextMove(weights, board, side, epsilon):
+    scores = getScores(weights, board, side)
+ 
     # returns first instance of max score
     best_idx = np.unravel_index(scores.argmax(), scores.shape)
     best_val = scores[best_idx]
@@ -274,7 +300,8 @@ def calcValAndDerivRaw(board_reps, y, weights):
 def fastLearn(fast_weights,
               n_cycles = 10,
               n_games = 10000, epsilon = 0.1, 
-              n_processed = 1e7, decay = 0.7, alpha = 1, batch_size=0):
+              n_processed = 1e7, decay = 0.7, alpha = 1, batch_size=0,
+              do_plot = True):
     for n in range(n_cycles):
         print("cycle:",n)
         global games_history
@@ -296,6 +323,27 @@ def fastLearn(fast_weights,
                     alpha=alpha, max_processed=max_processed, batch_size=batch_size)
             max_processed *= decay
         
+        if do_plot:
+            plot_layer(dd, weights)
+            
+            
+def plot_layer(learning_data, weights, nlayers=4):
+    fig, axes = plt.subplots(nrows=1, ncols=nlayers, figsize=(45, 10))
+    df_line=pd.DataFrame(data={'x':[0,1],'y':[0,1]})
+    for layer in range(nlayers):
+        aa=learning_data[layer][0]
+        bb=learning_data[layer][1]
+        jj=np.random.randn(bb.shape[1])/50
+        df = pd.DataFrame(data={
+            "pred":valFunc(aa,weights)[0][-1].flatten(), 
+            "target":bb.flatten() + jj})
+        df.plot.scatter(x='pred', y='target',
+                        grid=True, title="Layer "+str(layer),
+                        xlim=(0,1), ylim=(0,1),
+                        ax = axes[layer])
+        df_line.plot(legend=False,color="lightgrey", ax = axes[layer])
+#    p=ggplot(df2, aes('pred', 'target')) + geom_point()
+#    print(p)
 
 def createLearningData(games):
     input_target_list=[]
@@ -398,10 +446,10 @@ def nnFunc(x, weights):
     return (activations, zs)
 
 def sigmaFunc(z):
-    return z*(z>0)
+    return z*(z>=0)
 
 def sigmaFunc_deriv(z):
-    return 1.0*(z>0)
+    return 1.0*(z>=0)
     
 def checkWin(board, move):
     makeMove(board, move)
