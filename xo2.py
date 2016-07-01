@@ -20,6 +20,128 @@ LAYERS = [64, 32, 32, 1]
 
 DEBUG = False
 
+
+                  
+class VanillaOptim:
+    def __init__(self, max_processed = 1e8, batch_size = 1000, alpha=0.1):
+        self.alpha=alpha
+        self.max_processed=max_processed
+        self.batch_size=batch_size
+        print((self.alpha,self.max_processed,self.batch_size))
+        
+    def update(self, weights, deriv):
+        max_dw, max_db = np.float64('-inf'),np.float64('-inf') 
+        for (w,b),(dw,db) in zip(weights, deriv):
+            m_dw = dw.max()
+            m_db = db.max()
+            if m_dw>max_dw:
+                max_dw = m_dw
+            if m_db>max_db:
+                max_db = m_db
+            w-=self.alpha*dw
+            b-=self.alpha*db
+        return max_dw, max_db
+    
+    def optimize(self, inp, target, weights):
+         processed = 0
+         next_print = 0
+         while processed < self.max_processed:
+            if self.batch_size > 0:
+                jj = np.random.randint(0,inp.shape[1],self.batch_size)
+                activations, zs, deriv = calcValAndDerivRaw(inp[:,jj],target[:,jj],weights)
+                processed += self.batch_size
+            else:
+                activations, zs, deriv = calcValAndDerivRaw(inp, target, weights)
+                processed += inp.shape[1]
+                
+            max_dw, max_db = self.update(weights, deriv)
+            if processed > next_print:
+                next_print = processed + 1e6
+                activations, zs, deriv = calcValAndDerivRaw(inp,target,weights)
+                ee = activations[-1]-target
+                print("max=",ee.max(),
+                      "min=",ee.min(), 
+                      "mean_abs=",abs(ee).mean(),
+                      "mean_sqr=",(ee*ee).mean(),
+                      "max dw=",max_dw,
+                      "max db=",max_db)
+    
+
+class AdamOptim:
+    def __init__(self, max_processed = 1e8, batch_size = 0, 
+                 alpha=0.001, b1=0.9, b2=0.999, eps=1e-8,
+                 bAdaMax = False):
+        self.max_processed = max_processed
+        self.batch_size = batch_size
+        self.alpha=alpha
+        self.b1=b1
+        self.b2=b2
+        self.eps=eps
+        self.m_v=None
+        self.t=0
+        self.updateFun = self.updateAdaMax if bAdaMax else self.updateAdam
+        assert(b1>=0 and b1<1)
+        assert(b2>=0 and b2<1)
+        
+    def initialize_m_v(self, deriv):
+        self.m_v = [[[np.zeros_like(dw), np.zeros_like(db)], 
+                     [np.zeros_like(dw), np.zeros_like(db)]] for dw,db in deriv]
+                    
+    def updateAdam(self, weights, deriv):
+        for (((m1,m2),(v1,v2)), (dw, db), (w,b)) in zip(self.m_v, deriv, weights):
+            m1 = self.b1*m1 + (1-self.b1)*dw
+            m2 = self.b1*m2 + (1-self.b1)*db
+            v1 = self.b2*v1 + (1-self.b2)*np.square(dw)
+            v2 = self.b2*v2 + (1-self.b2)*np.square(db)
+            b1_t = np.power(self.b1, self.t)
+            b2_t = np.power(self.b2, self.t)
+            m1_hat = m1 / (1-b1_t)
+            m2_hat = m2 / (1-b1_t)
+            sqrt_v1_hat = np.sqrt(v1 / (1-b2_t)) + self.eps
+            sqrt_v2_hat = np.sqrt(v2 / (1-b2_t)) + self.eps
+            w -= self.alpha*m1_hat/sqrt_v1_hat
+            b -= self.alpha*m2_hat/sqrt_v2_hat
+    
+    def updateAdaMax(self, weights, deriv):
+        for (((m1,m2),(v1,v2)), (dw, db), (w,b)) in zip(self.m_v, deriv, weights):
+            m1 = self.b1*m1 + (1-self.b1)*dw
+            m2 = self.b1*m2 + (1-self.b1)*db
+            v1 = np.maximum(self.b2*v1, np.abs(dw))
+            v2 = np.maximum(self.b2*v2, np.abs(db))
+            b1_t = np.power(self.b1, self.t)
+            m1_hat = m1 / (1-b1_t)
+            m2_hat = m2 / (1-b1_t)
+            v1_hat = v1 + self.eps
+            v2_hat = v2 + self.eps
+            w -= self.alpha*m1_hat/v1_hat
+            b -= self.alpha*m2_hat/v2_hat
+            
+    
+    def optimize(self, inp, target, weights):
+        processed = 0
+        next_print = 0
+        while processed < self.max_processed:
+            self.t+=1
+            if self.batch_size > 0:
+                jj = np.random.randint(0,inp.shape[1],self.batch_size)
+                activations, zs, deriv = calcValAndDerivRaw(inp[:,jj],target[:,jj],weights)
+                processed += self.batch_size
+            else:
+                activations, zs, deriv = calcValAndDerivRaw(inp, target, weights)
+                processed += inp.shape[1]
+            if self.m_v is None:
+                self.initialize_m_v(deriv)
+            self.updateFun(weights, deriv)
+            if processed > next_print:
+                next_print = processed + 1e6
+                activations, zs, deriv = calcValAndDerivRaw(inp,target,weights)
+                ee = activations[-1]-target
+                print("max=",ee.max(),
+                      "min=",ee.min(), 
+                      "mean_abs=",abs(ee).mean(),
+                      "mean_sqr=",(ee*ee).mean())
+                      
+
 def createWinningBoards():
     brds={X:[],O:[]}
     for side in [X,O]:
@@ -231,22 +353,8 @@ def learnXO(weights, alpha = 0.001, epsilon = 0.05, num_games = 10000,
                 print("num games:",ii+1,"cost:",largest_cost_update, 
                 "wins:",wins)
                 wins = {OWIN:0,XWIN:0,DRAW:0}
-                largest_cost_update = 0
-    
+                largest_cost_update = 0    
     print(wins)
- 
-def updateWeights(weights, deriv, alpha):
-    max_dw, max_db = np.float64('-inf'),np.float64('-inf') 
-    for (w,b),(dw,db) in zip(weights, deriv):
-        m_dw = dw.max()
-        m_db = db.max()
-        if m_dw>max_dw:
-            max_dw = m_dw
-        if m_db>max_db:
-            max_db = m_db
-        w-=alpha*dw
-        b-=alpha*db
-    return max_dw, max_db
             
 def actionReward(weights, board, move):
     makeMove(board, move)
@@ -319,8 +427,9 @@ def fastLearn(fast_weights,
         max_processed = n_processed
         for ii in range(len(dd)):
             print("stage",ii, "data set size",dd[ii][0].shape)
-            learn_i(inp=dd[ii][0], target=dd[ii][1], weights=fast_weights, 
-                    alpha=alpha, max_processed=max_processed, batch_size=batch_size)
+            opt = VanillaOptim(max_processed, batch_size, alpha)
+            learn_i(inp=dd[ii][0], target=dd[ii][1], weights=fast_weights,
+                    optimizer=opt)
             max_processed *= decay
         
         if do_plot:
@@ -363,28 +472,33 @@ def createLearningData(games):
     return input_target_list
     
     
-def learn_i(inp, target, weights, alpha, max_processed, batch_size=1000):
-    processed = 0
-    next_print = 0
-    while processed < max_processed:
-        if batch_size > 0:
-            jj = np.random.randint(0,inp.shape[1],batch_size)
-            activations, zs, deriv = calcValAndDerivRaw(inp[:,jj],target[:,jj],weights)
-            processed += batch_size
-        else:
-            activations, zs, deriv = calcValAndDerivRaw(inp, target, weights)
-            processed += inp.shape[1]
-        max_dw, max_db = updateWeights(weights, deriv, alpha)
-        if processed > next_print:
-            next_print = processed + 1e6
-            activations, zs, deriv = calcValAndDerivRaw(inp,target,weights)
-            ee = activations[-1]-target
-            print("max=",ee.max(),
-                  "min=",ee.min(), 
-                  "mean_abs=",abs(ee).mean(),
-                  "mean_sqr=",(ee*ee).mean(),
-                  "max dw=",max_dw,
-                  "max db=",max_db)
+def learn_i(inp, target, weights, optimizer):
+    optimizer.optimize(inp, target, weights)
+#    
+#    #        alpha, max_processed, batch_size=1000,
+#    while not optimizer.done():
+##    processed = 0
+##    next_print = 0
+##    while processed < max_processed:
+#        if batch_size > 0:
+#            jj = np.random.randint(0,inp.shape[1],batch_size)
+#            activations, zs, deriv = calcValAndDerivRaw(inp[:,jj],target[:,jj],weights)
+#            processed += batch_size
+#        else:
+#            activations, zs, deriv = calcValAndDerivRaw(inp, target, weights)
+#            processed += inp.shape[1]
+#        
+#        max_dw, max_db = updateWeights(weights, deriv, alpha)
+#        if processed > next_print:
+#            next_print = processed + 1e6
+#            activations, zs, deriv = calcValAndDerivRaw(inp,target,weights)
+#            ee = activations[-1]-target
+#            print("max=",ee.max(),
+#                  "min=",ee.min(), 
+#                  "mean_abs=",abs(ee).mean(),
+#                  "mean_sqr=",(ee*ee).mean(),
+#                  "max dw=",max_dw,
+#                  "max db=",max_db)
 
     
 def invertVal(val, state):
