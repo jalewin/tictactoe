@@ -341,7 +341,7 @@ def learnXO(weights, alpha = 0.001, epsilon = 0.05, num_games = 10000,
                     print("1")
                     print(b,m)
                 val, deriv = calcValAndDeriv(weights, b, m, target_val)
-                max_dw, max_db = updateWeights(weights, deriv, alpha)
+                max_dw, max_db = updateWeights(weights, deriv, alpha)  ## change code to use VanillaOptimize
                 new_val, junk1 = calcVal(weights, b, m)
                 if DEBUG:
                     print("val:",v,"target:",target_val,"val_after_update",new_val)
@@ -474,32 +474,6 @@ def createLearningData(games):
     
 def learn_i(inp, target, weights, optimizer):
     optimizer.optimize(inp, target, weights)
-#    
-#    #        alpha, max_processed, batch_size=1000,
-#    while not optimizer.done():
-##    processed = 0
-##    next_print = 0
-##    while processed < max_processed:
-#        if batch_size > 0:
-#            jj = np.random.randint(0,inp.shape[1],batch_size)
-#            activations, zs, deriv = calcValAndDerivRaw(inp[:,jj],target[:,jj],weights)
-#            processed += batch_size
-#        else:
-#            activations, zs, deriv = calcValAndDerivRaw(inp, target, weights)
-#            processed += inp.shape[1]
-#        
-#        max_dw, max_db = updateWeights(weights, deriv, alpha)
-#        if processed > next_print:
-#            next_print = processed + 1e6
-#            activations, zs, deriv = calcValAndDerivRaw(inp,target,weights)
-#            ee = activations[-1]-target
-#            print("max=",ee.max(),
-#                  "min=",ee.min(), 
-#                  "mean_abs=",abs(ee).mean(),
-#                  "mean_sqr=",(ee*ee).mean(),
-#                  "max dw=",max_dw,
-#                  "max db=",max_db)
-
     
 def invertVal(val, state):
     if state is DRAW:
