@@ -4,23 +4,274 @@ import matplotlib.pyplot as plt
 import copy
 import pandas as pd
 
-BSIZE = 3
+Board.SIZE = 3
 EMPTY = 0
 X = 1
 O = 2
-MYSIDE = X
 
 XWIN = "XWIN"
 OWIN = "OWIN"
 DRAW = "DRAW"
 NONTERMINAL = "NONTERMINAL"
 
-# LAYERS = [64, 64, 1]
-LAYERS = [64, 32, 32, 1]
+LAYERS = [64, 64, 1]
+# LAYERS = [64, 32, 32, 1]
 
 DEBUG = False
 
 
+class Move:
+    def __init__(self, _index_tuple, _side):
+        self.idx=_index_tuple
+        self.side=_side
+    def __repr__(self):
+        return "Move(%s,%s)" % ((self.idx),["none","X","O"][self.side])
+        
+
+class Board:
+    DIM = 2
+    SIZE = 3
+    EMPTY = 0
+    X = 1
+    O = 2
+    XWIN = "XWIN"
+    OWIN = "OWIN"
+    DRAW = "DRAW"
+    NONTERMINAL = "NONTERMINAL"
+    _nvals = np.power(SIZE, DIM)
+    _shape = [Board.SIZE for d in range(DIM)]
+    side_to_string = [" ","X","O"]
+    
+    def __init__(self, board_repr=None):
+        self.move_hist = []
+        self.last_side = O
+        self.board = np.empty(Board._shape,dtype=np.int32)
+        self.board.fill(EMPTY)
+        if board_repr is not None:
+            self.board[(board_repr[1:(1+Board._nvals):1]==1).reshape(Board._shape)]=Board.X
+            self.board[(board_repr[(1+Board._nvals):(1+2*Board._nvals):1]==1).reshape(Board._shape)]=Board.O
+            self.last_side = X if board_repr[0]==1 else O
+            
+    def __repr__(self):
+        rv="\nlast_side=%s" % Board.side_to_string[self.last_side] + "\n"
+        tmp = self.board.__repr__().replace("array([","").replace("])","").replace(
+            ",\n       ","\n").replace(",","").replace(str(X),"X").replace(str(O),"O").replace(str(EMPTY)," ")
+        rv+=tmp + "\n"
+        return rv
+        
+    def otherSide(side):
+        return {X:O,O:X}[side]   
+
+    def boardRep(self):
+        # other_side = {Board.O:Board.X,Board.X:Board.O}[side]
+        tmp = self.board.reshape([-1,1])
+        # return np.vstack((tmp==side, tmp==other_side, tmp==EMPTY)).astype(np.float64)
+        return np.vstack((self.last_side==Board.X, tmp==Board.X, tmp==Board.O, tmp==EMPTY)).astype(np.float64)         
+            
+    def makeMove(self, move):
+        if self.board[move.idx]!=EMPTY or self.last_side == move.side:
+            print(self.board)
+            print(self.last_side)
+            print(move)
+            assert(self.board[move.idx]==EMPTY)
+            assert(self.last_side != move.side)
+        self.board[move.idx]=move.side
+        self.last_side = move.side
+        self.move_hist.append(move)
+    
+    def undoMove(self):
+        assert(len(self.move_hist) > 0)
+        move = self.move_hist.pop()
+        if self.board[move.idx]==EMPTY or self.last_side != move.side:
+            print(self.board)
+            print(self.last_side)
+            print(move)
+            assert(self.board[move.idx]!=EMPTY)
+            assert(self.last_side == move.side)
+        self.board[move.idx]=EMPTY
+        self.last_side = Board.otherSide(move.side)
+                 
+    def checkWin(self, move):
+        self.makeMove(move)
+        win = self.checkWin_i()
+        state = Board.NONTERMINAL
+        if win:
+            state={Board.O:Board.OWIN,Board.X:Board.XWIN}[move.side]
+        elif (self.board==Board.EMPTY).sum()==0:
+            state = Board.DRAW
+        self.undoMove()
+        return state
+    
+    def checkWin_i(self):
+        if len(self.move_hist)>0:
+            last_idx = self.move_hist[-1].idx
+        else:
+            last_idx = None
+        assert(last_idx is not None) # TODO if None check all possibilities
+        if Board.DIM==2:
+            return self.checkWin_2d(last_idx)
+        elif Board.DIM==3:
+            return self.checkWin_3d(last_idx)
+        else:
+            print("only 2d or 3d supported")
+            assert(Board.DIM==2 or Board.DIM==3)
+    
+    def checkWin_2d(self, last_idx):
+        val = self.last_side
+        won = True
+        for nn in range(0,Board.SIZE):
+            tmp = last_idx[:-1] + (nn,)
+            if self.board[tmp]!=val:
+                won = False
+                break
+        if won:
+            return True
+        won = True
+        for nn in range(0,Board.SIZE):
+            tmp = (nn,) + last_idx[1:]
+            if self.board[tmp]!=val:
+                won = False
+                break
+        if won:
+            return True
+        if last_idx[0]==last_idx[1]:
+            won = True
+            for nn in range(0,Board.SIZE):
+                tmp = (nn,nn)
+                if self.board[tmp]!=val:
+                    won = False
+                    break
+            if won:
+                return True
+        if last_idx[0]==Board.SIZE-1-last_idx[1]:
+            won = True 
+            for nn in range(0,Board.SIZE):
+                tmp = (nn, Board.SIZE-1-nn)
+                if self.board[tmp]!=val:
+                    won = False
+                    break
+            if won:
+                return True
+        return False
+    
+    def checkWin_3d(self, last_idx):
+        val = self.last_side        
+        won = True
+        for nn in range(0,Board.SIZE):
+            tmp = last_idx[:-1] + (nn,)
+            if self.board[tmp]!=val:
+                won = False
+                break
+        if won:
+            return True
+        won = True
+        for nn in range(0,Board.SIZE):
+            tmp = last_idx[0] + (nn,) + last_idx[2]
+            if self.board[tmp]!=val:
+                won = False
+                break
+        if won:
+            return True
+        won = True
+        for nn in range(0,Board.SIZE):
+            tmp = (nn,) + last_idx[1] + last_idx[2] 
+            if self.board[tmp]!=val:
+                won = False
+                break
+        if won:
+            return True
+        if last_idx[0]==last_idx[1]:
+            won = True
+            for nn in range(0,Board.SIZE):
+                tmp = (nn,nn) + last_idx[2]
+                if self.board[tmp]!=val:
+                    won = False
+                    break
+            if won:
+                return True
+        if last_idx[0]==Board.SIZE-1-last_idx[1]:
+            won = True 
+            for nn in range(0,Board.SIZE):
+                tmp = (nn, Board.SIZE-1-nn) + last_idx[2]
+                if self.board[tmp]!=val:
+                    won = False
+                    break
+            if won:
+                return True
+        if last_idx[0]==last_idx[2]:
+            won = True
+            for nn in range(0,Board.SIZE):
+                tmp = (nn,) + last_idx[1] + (nn,)
+                if self.board[tmp]!=val:
+                    won = False
+                    break
+            if won:
+                return True
+        if last_idx[0]==Board.SIZE-1-last_idx[2]:
+            won = True 
+            for nn in range(0,Board.SIZE):
+                tmp = (nn,) + last_idx[1] + (Board.SIZE-1-nn,)
+                if self.board[tmp]!=val:
+                    won = False
+                    break
+            if won:
+                return True
+        if last_idx[1]==last_idx[2]:
+            won = True
+            for nn in range(0,Board.SIZE):
+                tmp = tmp[0] + (nn,nn)
+                if self.board[tmp]!=val:
+                    won = False
+                    break
+            if won:
+                return True
+        if last_idx[1]==Board.SIZE-1-last_idx[2]:
+            won = True 
+            for nn in range(0,Board.SIZE):
+                tmp = tmp[0] + (nn,Board.SIZE-1-nn)
+                if self.board[tmp]!=val:
+                    won = False
+                    break
+            if won:
+                return True
+        if last_idx[0]==last_idx[1] and last_idx[1]==last_idx[2]:
+            won = True
+            for nn in range(0,Board.SIZE):
+                tmp = (nn,nn,nn)
+                if self.board[tmp]!=val:
+                    won = False
+                    break
+            if won:
+                return True
+        if last_idx[0]==last_idx[1] and last_idx[1]==Board.SIZE-1-last_idx[2]:
+            won = True
+            for nn in range(0,Board.SIZE):
+                tmp = (nn,nn,Board.SIZE-1-nn)
+                if self.board[tmp]!=val:
+                    won = False
+                    break
+            if won:
+                return True
+        if last_idx[0]==Board.SIZE-1-last_idx[1] and last_idx[1]==last_idx[2]:
+            won = True
+            for nn in range(0,Board.SIZE):
+                tmp = (nn,Board.SIZE-1-nn,nn)
+                if self.board[tmp]!=val:
+                    won = False
+                    break
+            if won:
+                return True
+        if last_idx[0]==Board.SIZE-1-last_idx[1] and last_idx[1]==Board.SIZE-1-last_idx[2]:
+            won = True
+            for nn in range(0,Board.SIZE):
+                tmp = (nn,Board.SIZE-1-nn,Board.SIZE-1-nn)
+                if self.board[tmp]!=val:
+                    won = False
+                    break
+            if won:
+                return True
+        return False
+    
                   
 class VanillaOptim:
     def __init__(self, max_processed = 1e8, batch_size = 1000, alpha=0.1):
@@ -143,32 +394,32 @@ class AdamOptim:
                       
 
 def createWinningBoards():
-    brds={X:[],O:[]}
-    for side in [X,O]:
-        for j in range(BSIZE):
-            bb = createBoard()
-            for i in range(BSIZE): 
-                makeMove(bb, Move((j,i),side))
+    brds={Board.X:[],Board.O:[]}
+    for side in [Board.X,Board.O]:
+        for j in range(Board.SIZE):
+            bb = Board() # createBoard()
+            for i in range(Board.SIZE): 
+                bb.makeMove(Move((j,i),side))
                 bb2 = bb.copy()
-            brds[side].append(bb)
-            brds[side].append(bb2.T)
-        bb = createBoard()
-        for i in range(BSIZE):
-            makeMove(bb, Move((i,i), side))
-        brds[side].append(bb)
-        bb = createBoard()
-        for i in range(BSIZE):
-            makeMove(bb, Move((i,BSIZE-1-i), side))
-        brds[side].append(bb)
+            brds[side].append(bb.board)
+            brds[side].append(bb2.board.T)
+        bb = Board() # createBoard()
+        for i in range(Board.SIZE):
+            bb.makeMove(Move((i,i), side))
+        brds[side].append(bb.board)
+        bb = Board() # createBoard()
+        for i in range(Board.SIZE):
+            bb.makeMove(Move((i,Board.SIZE-1-i), side))
+        brds[side].append(bb.board)
     return brds
 
-def createBoard():
-    board = np.empty([BSIZE,BSIZE],dtype=np.int32)
-    board.fill(EMPTY)
-    return board
+#def createBoard():
+#    board = np.empty([Board.SIZE,Board.SIZE],dtype=np.int32)
+#    board.fill(EMPTY)
+#    return board
 
 def createScoreBoard():
-    board = np.empty([BSIZE,BSIZE],dtype=np.float64)
+    board = np.empty([Board.SIZE for d in range(Board.DIM)],dtype=np.float64)
     board.fill(-1.0)
     return board
     
@@ -183,21 +434,13 @@ def randWeightsAndBias(in_dim, out_dim, scale):
     
 def createWeights(scale=1.0):
     rv =[]
-    previous_layer = boardRep(createBoard(),X).shape[0]
+    previous_layer = Board().boardRep().shape[0]
     for new_layer in LAYERS:
         rv.append(randWeightsAndBias(previous_layer, new_layer, scale))
         previous_layer = new_layer
     return rv
 
-
-class Move:
-    def __init__(self, _ijk_tuple, _side):
-        self.ii=_ijk_tuple[0]
-        self.jj=_ijk_tuple[1]
-        self.side=_side
-    def __repr__(self):
-        return "Move(%s,%s)" % ((self.ii, self.jj),["none","X","O"][self.side])
-
+## TODO FIX FROM HERE
 
 def getScores(weights, board, side):
     it = np.nditer(board, flags=['multi_index'])
@@ -235,11 +478,11 @@ def chooseNextMove(weights, board, side, epsilon):
  
 def playHuman(weights, human_first=True):
     board = createBoard()
-    move = Move((0,0,0),O)
-    state = NONTERMINAL
-    side = X
-    human_side = X if human_first else O
-    while state is NONTERMINAL:
+    move = Move((0,0,0),Board.O)
+    state = Board.NONTERMINAL
+    side = Board.X
+    human_side = Board.X if human_first else Board.O
+    while state is Board.NONTERMINAL:
         print()
         print(board)
         if side==human_side:
@@ -255,7 +498,7 @@ def playHuman(weights, human_first=True):
             print("val=",val)
         else:
             print(scores)
-        side = {O:X,X:O}[side]
+        side = {Board.O:Board.X,Board.X:Board.O}[side]
     print(board)
     print(state)
     return board, move
@@ -268,7 +511,7 @@ def getMove(board, side):
             mm=eval(mm)
             assert( type(mm) is tuple and 
                     len(mm)==2 and 
-                    all([type(i) is int and i>=1 and i<=BSIZE for i in mm]))
+                    all([type(i) is int and i>=1 and i<=Board.SIZE for i in mm]))
         except(NameError, AssertionError):
             print("bad input")
             continue
@@ -289,30 +532,30 @@ def learnXO(weights, alpha = 0.001, epsilon = 0.05, num_games = 10000,
 #    if 'weights' not in globals() or reset_weights:
 #        global weights
 #        weights = createWeights()
-    wins = {OWIN:0,XWIN:0,DRAW:0}
+    wins = {Board.OWIN:0,Board.XWIN:0,Board.DRAW:0}
     largest_cost_update = 0
 
     for ii in range(num_games):
         # orig_weights = weights.copy()
         board = createBoard()
         board_history = []
-        state = NONTERMINAL
-        current_side = X
-        while state is NONTERMINAL:
+        state = Board.NONTERMINAL
+        current_side = Board.X
+        while state is Board.NONTERMINAL:
             # TODOJ - choose only 1 random move in a game? need to make the random choice at a uniform stage
             current_move, current_val, is_rand, scores = chooseNextMove(weights, board, current_side, epsilon)
             state = checkWin(board, current_move)
             makeMove(board, current_move)
             tmp=(board.copy(), current_move, current_val, state)
             board_history.append(tmp)
-            current_side = {O:X,X:O}[current_side]
+            current_side = {Board.O:Board.X,Board.X:Board.O}[current_side]
     
         if DEBUG:
             print()
             print("NEW GAME:")
         
         b,m,v,s = board_history[-1]
-        if s is DRAW:
+        if s is Board.DRAW:
             target_val = 0.5
         else:
             target_val = 1.0
@@ -352,7 +595,7 @@ def learnXO(weights, alpha = 0.001, epsilon = 0.05, num_games = 10000,
             if (ii+1)%100==0:
                 print("num games:",ii+1,"cost:",largest_cost_update, 
                 "wins:",wins)
-                wins = {OWIN:0,XWIN:0,DRAW:0}
+                wins = {Board.OWIN:0,Board.XWIN:0,Board.DRAW:0}
                 largest_cost_update = 0    
     print(wins)
             
@@ -362,28 +605,28 @@ def actionReward(weights, board, move):
     undoMove(board, move)
     return val
 
-def makeMove(board, move):
-    if board[move.ii,move.jj]!=EMPTY:
-        print(board)
-        print(move)
-    assert(board[move.ii,move.jj]==EMPTY)
-    board[move.ii,move.jj]=move.side
-    
-def undoMove(board, move):
-    assert(board[move.ii,move.jj]!=EMPTY)
-    board[move.ii,move.jj]=EMPTY  
-
-def boardRep(board, side):
-    # other_side = {O:X,X:O}[side]
-    tmp = board.reshape([-1,1])
-    # return np.vstack((tmp==side, tmp==other_side, tmp==EMPTY)).astype(np.float64)
-    return np.vstack((side==X, tmp==X, tmp==O, tmp==EMPTY)).astype(np.float64)
-    
-def repToBoard(rep):
-    bb = createBoard()
-    bb[(rep[1:10:1]==1).reshape([3,3])]=X
-    bb[(rep[10:19:1]==1).reshape([3,3])]=O
-    return bb
+#def makeMove(board, move):
+#    if board[move.ii,move.jj]!=EMPTY:
+#        print(board)
+#        print(move)
+#    assert(board[move.ii,move.jj]==EMPTY)
+#    board[move.ii,move.jj]=move.side
+#    
+#def undoMove(board, move):
+#    assert(board[move.ii,move.jj]!=EMPTY)
+#    board[move.ii,move.jj]=EMPTY  
+#
+#def boardRep(board, side):
+#    # other_side = {Board.O:Board.X,Board.X:Board.O}[side]
+#    tmp = board.reshape([-1,1])
+#    # return np.vstack((tmp==side, tmp==other_side, tmp==EMPTY)).astype(np.float64)
+#    return np.vstack((side==Board.X, tmp==Board.X, tmp==Board.O, tmp==EMPTY)).astype(np.float64)
+#    
+#def repToBoard(rep):
+#    bb = createBoard()
+#    bb[(rep[1:10:1]==1).reshape([3,3])]=Board.X
+#    bb[(rep[10:19:1]==1).reshape([3,3])]=Board.O
+#    return bb
 
 def calcVal(weights, board, last_move):
     board_rep = boardRep(board, last_move.side)
@@ -476,7 +719,7 @@ def learn_i(inp, target, weights, optimizer):
     optimizer.optimize(inp, target, weights)
     
 def invertVal(val, state):
-    if state is DRAW:
+    if state is Board.DRAW:
         return val
     return 1.0 - val             
           
@@ -539,50 +782,50 @@ def sigmaFunc(z):
 def sigmaFunc_deriv(z):
     return 1.0*(z>=0)
     
-def checkWin(board, move):
-    makeMove(board, move)
-    win = checkWin_i(board, move)
-    state = NONTERMINAL
-    if win:
-        state={O:OWIN,X:XWIN}[move.side]
-    elif (board==EMPTY).sum()==0:
-        state = DRAW
-    undoMove(board, move)
-    return state
-
-def checkWin_i(board, last_move):
-    val = last_move.side
-    ii = last_move.ii
-    jj = last_move.jj
-    won = True
-    for nn in range(0,BSIZE):
-        if board[ii,nn]!=val:
-            won = False
-            break
-    if won:
-        return True
-    won = True
-    for nn in range(0,BSIZE):
-        if board[nn,jj]!=val:
-            won = False
-            break
-    if won:
-        return True
-    if ii==jj:
-        won = True
-        for nn in range(0,BSIZE):
-            if board[nn,nn]!=val:
-                won = False
-                break
-        if won:
-            return True
-    if ii==BSIZE-1-jj:
-        won = True 
-        for nn in range(0,BSIZE):
-            if board[nn,BSIZE-1-nn]!=val:
-                won = False
-                break
-        if won:
-            return True
-    return False
-    
+#def checkWin(board, move):
+#    makeMove(board, move)
+#    win = checkWin_i(board, move)
+#    state = Board.NONTERMINAL
+#    if win:
+#        state={Board.O:Board.OWIN,Board.X:Board.XWIN}[move.side]
+#    elif (board==EMPTY).sum()==0:
+#        state = Board.DRAW
+#    undoMove(board, move)
+#    return state
+#
+#def checkWin_i(board, last_move):
+#    val = last_move.side
+#    ii = last_move.ii
+#    jj = last_move.jj
+#    won = True
+#    for nn in range(0,Board.SIZE):
+#        if board[ii,nn]!=val:
+#            won = False
+#            break
+#    if won:
+#        return True
+#    won = True
+#    for nn in range(0,Board.SIZE):
+#        if board[nn,jj]!=val:
+#            won = False
+#            break
+#    if won:
+#        return True
+#    if ii==jj:
+#        won = True
+#        for nn in range(0,Board.SIZE):
+#            if board[nn,nn]!=val:
+#                won = False
+#                break
+#        if won:
+#            return True
+#    if ii==Board.SIZE-1-jj:
+#        won = True 
+#        for nn in range(0,Board.SIZE):
+#            if board[nn,Board.SIZE-1-nn]!=val:
+#                won = False
+#                break
+#        if won:
+#            return True
+#    return False
+#    
