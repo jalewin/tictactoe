@@ -4,18 +4,11 @@ import matplotlib.pyplot as plt
 import copy
 import pandas as pd
 
-Board.SIZE = 3
-EMPTY = 0
-X = 1
-O = 2
-
-XWIN = "XWIN"
-OWIN = "OWIN"
-DRAW = "DRAW"
-NONTERMINAL = "NONTERMINAL"
-
 LAYERS = [64, 64, 1]
 # LAYERS = [64, 32, 32, 1]
+
+
+
 
 DEBUG = False
 
@@ -27,7 +20,9 @@ class Move:
     def __repr__(self):
         return "Move(%s,%s)" % ((self.idx),["none","X","O"][self.side])
         
-
+def dummyFun1(x,y):
+    return [x for i in range(y)]
+    
 class Board:
     DIM = 2
     SIZE = 3
@@ -39,41 +34,68 @@ class Board:
     DRAW = "DRAW"
     NONTERMINAL = "NONTERMINAL"
     _nvals = np.power(SIZE, DIM)
-    _shape = [Board.SIZE for d in range(DIM)]
+    # need dummy fun in python3 since comprehension expression cannot use class attributes
+    # dummyFun1(SIZE, DIM)
+    _shape = [SIZE]*DIM  
     side_to_string = [" ","X","O"]
     
     def __init__(self, board_repr=None):
         self.move_hist = []
-        self.last_side = O
+        self.last_side = Board.O
         self.board = np.empty(Board._shape,dtype=np.int32)
-        self.board.fill(EMPTY)
+        self.board.fill(Board.EMPTY)
         if board_repr is not None:
             self.board[(board_repr[1:(1+Board._nvals):1]==1).reshape(Board._shape)]=Board.X
             self.board[(board_repr[(1+Board._nvals):(1+2*Board._nvals):1]==1).reshape(Board._shape)]=Board.O
-            self.last_side = X if board_repr[0]==1 else O
+            self.last_side = Board.X if board_repr[0]==1 else Board.O
             
     def __repr__(self):
         rv="\nlast_side=%s" % Board.side_to_string[self.last_side] + "\n"
         tmp = self.board.__repr__().replace("array([","").replace("])","").replace(
-            ",\n       ","\n").replace(",","").replace(str(X),"X").replace(str(O),"O").replace(str(EMPTY)," ")
+            ",\n       ","\n").replace(",","").replace(str(Board.X),"X").replace(str(Board.O),"O").replace(str(Board.EMPTY)," ")
         rv+=tmp + "\n"
         return rv
         
     def otherSide(side):
-        return {X:O,O:X}[side]   
+        return {Board.X:Board.O,Board.O:Board.X}[side]
+        
+    def nextSide(self):
+        return Board.otherSide(self.last_side)
 
     def boardRep(self):
         # other_side = {Board.O:Board.X,Board.X:Board.O}[side]
         tmp = self.board.reshape([-1,1])
-        # return np.vstack((tmp==side, tmp==other_side, tmp==EMPTY)).astype(np.float64)
-        return np.vstack((self.last_side==Board.X, tmp==Board.X, tmp==Board.O, tmp==EMPTY)).astype(np.float64)         
+        # return np.vstack((tmp==side, tmp==other_side, tmp==Board.EMPTY)).astype(np.float64)
+        return np.vstack((self.last_side==Board.X, tmp==Board.X, tmp==Board.O, tmp==Board.EMPTY)).astype(np.float64)         
+    
+    def inputMove(self):
+        good = False
+        while not good:
+            mm = input("your move: (enter x,y)\n")
+            try:
+                mm = eval(mm)
+                assert( type(mm) is tuple and 
+                        len(mm)==Board.DIM and 
+                        all([type(i) is int and i>=1 and i<=Board.SIZE for i in mm]))
+            except(NameError, AssertionError):
+                print("bad input")
+                continue
+            mm = [i-1 for i in mm]
+            # if self.board[mm[0],mm[1]]!=Board.EMPTY:
+            if self.board[mm]!=Board.EMPTY:
+                print("place taken, choose another place")
+                continue
+            good = True
+        move = Move(mm, self.nextSide())
+        return move
             
+        
     def makeMove(self, move):
-        if self.board[move.idx]!=EMPTY or self.last_side == move.side:
+        if self.board[move.idx]!=Board.EMPTY or self.last_side == move.side:
             print(self.board)
             print(self.last_side)
             print(move)
-            assert(self.board[move.idx]==EMPTY)
+            assert(self.board[move.idx]==Board.EMPTY)
             assert(self.last_side != move.side)
         self.board[move.idx]=move.side
         self.last_side = move.side
@@ -82,13 +104,13 @@ class Board:
     def undoMove(self):
         assert(len(self.move_hist) > 0)
         move = self.move_hist.pop()
-        if self.board[move.idx]==EMPTY or self.last_side != move.side:
+        if self.board[move.idx]==Board.EMPTY or self.last_side != move.side:
             print(self.board)
             print(self.last_side)
             print(move)
-            assert(self.board[move.idx]!=EMPTY)
+            assert(self.board[move.idx]!=Board.EMPTY)
             assert(self.last_side == move.side)
-        self.board[move.idx]=EMPTY
+        self.board[move.idx]=Board.EMPTY
         self.last_side = Board.otherSide(move.side)
                  
     def checkWin(self, move):
@@ -107,7 +129,7 @@ class Board:
             last_idx = self.move_hist[-1].idx
         else:
             last_idx = None
-        assert(last_idx is not None) # TODO if None check all possibilities
+        assert(last_idx is not None) # TODO If None, check all possibilities
         if Board.DIM==2:
             return self.checkWin_2d(last_idx)
         elif Board.DIM==3:
@@ -413,11 +435,6 @@ def createWinningBoards():
         brds[side].append(bb.board)
     return brds
 
-#def createBoard():
-#    board = np.empty([Board.SIZE,Board.SIZE],dtype=np.int32)
-#    board.fill(EMPTY)
-#    return board
-
 def createScoreBoard():
     board = np.empty([Board.SIZE for d in range(Board.DIM)],dtype=np.float64)
     board.fill(-1.0)
@@ -430,8 +447,7 @@ def randArray(shape, scale):
     
 def randWeightsAndBias(in_dim, out_dim, scale):
     return [randArray([out_dim,in_dim],scale),randArray([out_dim,1],scale)]
-        
-    
+           
 def createWeights(scale=1.0):
     rv =[]
     previous_layer = Board().boardRep().shape[0]
@@ -440,36 +456,35 @@ def createWeights(scale=1.0):
         previous_layer = new_layer
     return rv
 
-## TODO FIX FROM HERE
-
-def getScores(weights, board, side):
-    it = np.nditer(board, flags=['multi_index'])
+def getScores(weights, board):
+    it = np.nditer(board.board, flags=['multi_index'])
     scores = createScoreBoard()
-    scores[board==EMPTY] = -2
+    scores[board.board==Board.EMPTY] = -2
+    next_side = board.nextSide()
     while not it.finished:
-        if it[0]==EMPTY:
-            move = Move(it.multi_index,side)
+        if it[0]==Board.EMPTY:
+            move = Move(it.multi_index,next_side)
             val = actionReward(weights, board, move)
             # print(it.multi_index, val)
             scores[it.multi_index] = val
         it.iternext()   
     return scores
 
-def chooseNextMove(weights, board, side, epsilon):
-    scores = getScores(weights, board, side)
+def chooseNextMove(weights, board, epsilon):
+    scores = getScores(weights, board)
  
     # returns first instance of max score
     best_idx = np.unravel_index(scores.argmax(), scores.shape)
     best_val = scores[best_idx]
-    best_move = Move(best_idx, side)
+    best_move = Move(best_idx, board.nextSide())
     chose_rand = False
     
     if epsilon>0 and np.random.rand() < epsilon:
-        idxs = np.where(board==EMPTY)
+        idxs = np.where(board==Board.EMPTY)
         if len(idxs[0])>0:
             ii = np.random.randint(0,len(idxs[0]))
             rand_idx = tuple([idxs[j][ii] for j in range(len(idxs))])
-            best_move = Move(rand_idx, side)
+            best_move = Move(rand_idx, board.nextSide())
             chose_rand = True
      
     # note that val is the max value. In case of random move might not be val of move
@@ -477,84 +492,54 @@ def chooseNextMove(weights, board, side, epsilon):
     
  
 def playHuman(weights, human_first=True):
-    board = createBoard()
-    move = Move((0,0,0),Board.O)
+    board = Board() 
     state = Board.NONTERMINAL
-    side = Board.X
     human_side = Board.X if human_first else Board.O
     while state is Board.NONTERMINAL:
         print()
         print(board)
-        if side==human_side:
-            move = getMove(board, side)
+        if board.nextSide()==human_side:
+            move = board.inputMove()
         else:
-            move, c_val, c_rand, scores = chooseNextMove(weights, board, side, epsilon=0)
+            move, c_val, c_rand, scores = chooseNextMove(weights, board, epsilon=0)
         
-        state = checkWin(board, move)
-        makeMove(board, move)
-        val, rv = calcVal(weights, board, move)
+        state = board.checkWin(move)
+        board.makeMove(move)
+        val, rv = calcVal(weights, board.boardRep())
        
-        if side==human_side:
+        if board.last_side==human_side:
             print("val=",val)
         else:
             print(scores)
-        side = {Board.O:Board.X,Board.X:Board.O}[side]
     print(board)
     print(state)
     return board, move
-    
-def getMove(board, side):
-    good = False
-    while not good:
-        mm = input("your move: (enter x,y)\n")
-        try:
-            mm=eval(mm)
-            assert( type(mm) is tuple and 
-                    len(mm)==2 and 
-                    all([type(i) is int and i>=1 and i<=Board.SIZE for i in mm]))
-        except(NameError, AssertionError):
-            print("bad input")
-            continue
-        mm = [i-1 for i in mm]
-        if board[mm[0],mm[1]]!=EMPTY:
-            print("place taken, choose another place")
-            continue
-        good = True
-    move = Move(mm,side)
-    return move
-            
  
 def learnXO(weights, alpha = 0.001, epsilon = 0.05, num_games = 10000, 
             reset_weights = False, save_games=False, 
             learn_weights = True):
     global ALPHA
     ALPHA = alpha
-#    if 'weights' not in globals() or reset_weights:
-#        global weights
-#        weights = createWeights()
     wins = {Board.OWIN:0,Board.XWIN:0,Board.DRAW:0}
     largest_cost_update = 0
 
     for ii in range(num_games):
-        # orig_weights = weights.copy()
-        board = createBoard()
+        board = Board()
         board_history = []
         state = Board.NONTERMINAL
-        current_side = Board.X
         while state is Board.NONTERMINAL:
             # TODOJ - choose only 1 random move in a game? need to make the random choice at a uniform stage
-            current_move, current_val, is_rand, scores = chooseNextMove(weights, board, current_side, epsilon)
-            state = checkWin(board, current_move)
-            makeMove(board, current_move)
-            tmp=(board.copy(), current_move, current_val, state)
+            current_move, current_val, is_rand, scores = chooseNextMove(weights, board, epsilon)
+            state = board.checkWin(current_move)
+            board.makeMove(current_move)
+            tmp=(board.boardRep(), current_move, current_val, state)
             board_history.append(tmp)
-            current_side = {Board.O:Board.X,Board.X:Board.O}[current_side]
     
         if DEBUG:
             print()
             print("NEW GAME:")
         
-        b,m,v,s = board_history[-1]
+        r,m,v,s = board_history[-1]
         if s is Board.DRAW:
             target_val = 0.5
         else:
@@ -563,9 +548,9 @@ def learnXO(weights, alpha = 0.001, epsilon = 0.05, num_games = 10000,
         
         if save_games:
             # targets are the value of the next nnFunc and only the last value the game value.
-            targets=[1.0-v for b,m,v,s in board_history]
+            targets=[1.0-v for r,m,v,s in board_history]
             targets=targets[1:] + [target_val]
-            board_reps=[boardRep(b,m.side) for b,m,v,s in board_history]
+            board_reps=[r for r,m,v,s in board_history]
 #            print(board_history)
 #            print(np.hstack(board_reps))
 #            print(np.hstack(targets))
@@ -579,16 +564,17 @@ def learnXO(weights, alpha = 0.001, epsilon = 0.05, num_games = 10000,
                 games_history[1].append(targets)
         
         if learn_weights:
-            for b,m,v,s in reversed(board_history):
+            opt = VanillaOptim(max_processed=1e9, batch_size=0, alpha=alpha)
+            for r,m,v,s in reversed(board_history):
                 if DEBUG:
                     print("1")
-                    print(b,m)
-                val, deriv = calcValAndDeriv(weights, b, m, target_val)
-                max_dw, max_db = updateWeights(weights, deriv, alpha)  ## change code to use VanillaOptimize
-                new_val, junk1 = calcVal(weights, b, m)
+                    print(Board(board_repr=r),m)
+                old_val, junk1 = calcVal(weights, r)
+                opt.optimize(inp=r, target=target_val, weights=weights)
+                new_val, junk1 = calcVal(weights, r)
                 if DEBUG:
                     print("val:",v,"target:",target_val,"val_after_update",new_val)
-                cost = (new_val - val)**2
+                cost = (new_val - old_val)**2
                 if cost > largest_cost_update:
                     largest_cost_update=cost
                 target_val = invertVal(new_val,state)
@@ -600,46 +586,15 @@ def learnXO(weights, alpha = 0.001, epsilon = 0.05, num_games = 10000,
     print(wins)
             
 def actionReward(weights, board, move):
-    makeMove(board, move)
-    val, rv = calcVal(weights, board, move)
-    undoMove(board, move)
+    board.makeMove(move)
+    val, rv = calcVal(weights, board.boardRep())
+    board.undoMove()
     return val
 
-#def makeMove(board, move):
-#    if board[move.ii,move.jj]!=EMPTY:
-#        print(board)
-#        print(move)
-#    assert(board[move.ii,move.jj]==EMPTY)
-#    board[move.ii,move.jj]=move.side
-#    
-#def undoMove(board, move):
-#    assert(board[move.ii,move.jj]!=EMPTY)
-#    board[move.ii,move.jj]=EMPTY  
-#
-#def boardRep(board, side):
-#    # other_side = {Board.O:Board.X,Board.X:Board.O}[side]
-#    tmp = board.reshape([-1,1])
-#    # return np.vstack((tmp==side, tmp==other_side, tmp==EMPTY)).astype(np.float64)
-#    return np.vstack((side==Board.X, tmp==Board.X, tmp==Board.O, tmp==EMPTY)).astype(np.float64)
-#    
-#def repToBoard(rep):
-#    bb = createBoard()
-#    bb[(rep[1:10:1]==1).reshape([3,3])]=Board.X
-#    bb[(rep[10:19:1]==1).reshape([3,3])]=Board.O
-#    return bb
-
-def calcVal(weights, board, last_move):
-    board_rep = boardRep(board, last_move.side)
+def calcVal(weights, board_rep):
     rv = valFunc(board_rep, weights)
     val = rv[0][-1]
     return (val, rv)
-    
-def calcValAndDeriv(weights, board, last_move, y):
-    # forward
-    final_val, (activations, zs) = calcVal(weights, board, last_move)
-    # backprop
-    deriv = valFunc_deriv(activations, zs, weights, y)
-    return (final_val, deriv)
     
 def calcValAndDerivRaw(board_reps, y, weights):
     # forward
@@ -671,8 +626,7 @@ def fastLearn(fast_weights,
         for ii in range(len(dd)):
             print("stage",ii, "data set size",dd[ii][0].shape)
             opt = VanillaOptim(max_processed, batch_size, alpha)
-            learn_i(inp=dd[ii][0], target=dd[ii][1], weights=fast_weights,
-                    optimizer=opt)
+            opt.optimize(inp=dd[ii][0], target=dd[ii][1], weights=fast_weights)
             max_processed *= decay
         
         if do_plot:
@@ -713,10 +667,6 @@ def createLearningData(games):
             assert(len(tmp_bb)==0 and len(tmp_tt)==0)
             break 
     return input_target_list
-    
-    
-def learn_i(inp, target, weights, optimizer):
-    optimizer.optimize(inp, target, weights)
     
 def invertVal(val, state):
     if state is Board.DRAW:
@@ -781,51 +731,3 @@ def sigmaFunc(z):
 
 def sigmaFunc_deriv(z):
     return 1.0*(z>=0)
-    
-#def checkWin(board, move):
-#    makeMove(board, move)
-#    win = checkWin_i(board, move)
-#    state = Board.NONTERMINAL
-#    if win:
-#        state={Board.O:Board.OWIN,Board.X:Board.XWIN}[move.side]
-#    elif (board==EMPTY).sum()==0:
-#        state = Board.DRAW
-#    undoMove(board, move)
-#    return state
-#
-#def checkWin_i(board, last_move):
-#    val = last_move.side
-#    ii = last_move.ii
-#    jj = last_move.jj
-#    won = True
-#    for nn in range(0,Board.SIZE):
-#        if board[ii,nn]!=val:
-#            won = False
-#            break
-#    if won:
-#        return True
-#    won = True
-#    for nn in range(0,Board.SIZE):
-#        if board[nn,jj]!=val:
-#            won = False
-#            break
-#    if won:
-#        return True
-#    if ii==jj:
-#        won = True
-#        for nn in range(0,Board.SIZE):
-#            if board[nn,nn]!=val:
-#                won = False
-#                break
-#        if won:
-#            return True
-#    if ii==Board.SIZE-1-jj:
-#        won = True 
-#        for nn in range(0,Board.SIZE):
-#            if board[nn,Board.SIZE-1-nn]!=val:
-#                won = False
-#                break
-#        if won:
-#            return True
-#    return False
-#    
