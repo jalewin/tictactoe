@@ -480,7 +480,7 @@ def chooseNextMove(weights, board, epsilon):
     chose_rand = False
     
     if epsilon>0 and np.random.rand() < epsilon:
-        idxs = np.where(board==Board.EMPTY)
+        idxs = np.where(board.board==Board.EMPTY)
         if len(idxs[0])>0:
             ii = np.random.randint(0,len(idxs[0]))
             rand_idx = tuple([idxs[j][ii] for j in range(len(idxs))])
@@ -701,6 +701,8 @@ def outFunc_deriv(x):
     tmp = 1+e_x
     return e_x/(tmp*tmp)
 
+def costFunc(activation, y):
+    return 0.5 * (activation - y)**2
 ## assuming cost function:  0.5*(activation - y)^2
 # could try: -y*log(y_hat)-(1-y)*log(1-y_hat)
 def costFunc_deriv(activation, y):
@@ -731,3 +733,29 @@ def sigmaFunc(z):
 
 def sigmaFunc_deriv(z):
     return 1.0*(z>=0)
+    
+    
+def checkDeriv(bb,tt,ww, eps=0.001):
+    activations, zs, deriv = calcValAndDerivRaw(bb,tt,ww)
+    base_val = activations[-1]
+    base_loss = costFunc(base_val, tt)
+    rv = createWeights(0)
+    for lvl in range(len(ww)):
+        for ii in range(ww[lvl][0].shape[1]):
+            tmp=copy.deepcopy(ww)
+            tmp[lvl][0][0,ii]+=eps
+            new_val = calcVal(tmp, bb)[0]
+            new_loss = costFunc(new_val, tt)
+            rv[lvl][0][0,ii] = (new_loss - base_loss)/eps
+        tmp=copy.deepcopy(ww)
+        tmp[lvl][1][0,0]+=eps
+        new_val = calcVal(tmp, bb)[0]
+        new_loss = costFunc(new_val, tt)
+        rv[lvl][1][0,0] = (new_loss - base_loss)/eps
+    return rv
+                
+    
+    
+# ww = createWeights()    
+# fastLearn(fast_weights=ww,n_cycles=1, n_games=2,epsilon=1.0)
+
