@@ -80,7 +80,7 @@ class Board:
             except(NameError, AssertionError):
                 print("bad input")
                 continue
-            mm = [i-1 for i in mm]
+            mm = tuple([i-1 for i in mm])
             # if self.board[mm[0],mm[1]]!=Board.EMPTY:
             if self.board[mm]!=Board.EMPTY:
                 print("place taken, choose another place")
